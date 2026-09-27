@@ -84,6 +84,7 @@ class RmspRecord:
             email=row.get("email"),
             website=row.get("www"),
             employee_count=row.get("od2_sschr"),
+            svo_employee_count=row.get("od2_svo_sschr"),
             has_licenses=bool(row["has_licenses"]),
             is_hitech=bool(row["is_hitech"]),
             is_partnership=bool(row["is_partnership"]),

@@ -22,6 +22,43 @@ HEADCOUNT_RU = {
     101: "больше 100 человек",
 }
 
+
+@dataclass(frozen=True)
+class HeadcountBenefit:
+    """Льгота, которая доступна, пока численность не больше limit (пороги — НК РФ и № 17-ФЗ)."""
+    code: str
+    limit: int
+    title: str
+    basis: str
+    url: str
+    ip_only: bool = False
+
+
+# Законы считают численность по-разному — это сказано в title. Сверено 27.09.2026.
+HEADCOUNT_BENEFITS = (
+    HeadcountBenefit("ausn", 5, "Можно применять АУСН: средняя численность работников не больше 5",
+                     "ст. 3 и ч. 6 ст. 4 Закона от 25.02.2022 № 17-ФЗ",
+                     "https://www.nalog.gov.ru/rn77/taxation/taxes/autotax_system/"),
+    HeadcountBenefit("paper_6ndfl", 10, "6-НДФЛ можно сдавать на бумаге: доходы получили до 10 человек",
+                     "п. 2 ст. 230 НК РФ",
+                     "https://www.consultant.ru/document/cons_doc_LAW_28165/7262accf6a3d67f9ced3a3dceb38c7bda15d539d/"),
+    HeadcountBenefit("paper_rsv", 10, "Расчёт по страховым взносам можно сдавать на бумаге: "
+                     "выплаты начислены 10 и менее людям",
+                     "п. 10 ст. 431 НК РФ",
+                     "https://www.consultant.ru/document/cons_doc_LAW_28165/0ed5a3663457a89de56229ffbe2cba0b25f42111/"),
+    HeadcountBenefit("psn", 15, "ИП может применять патент: средняя численность наёмных работников "
+                     "по всем патентам не больше 15",
+                     "п. 5 ст. 346.43 НК РФ",
+                     "https://www.nalog.gov.ru/rn77/taxation/taxes/patent/", ip_only=True),
+    HeadcountBenefit("paper_decl", 100, "Декларации можно сдавать на бумаге: среднесписочная численность "
+                     "за прошлый год не больше 100 (НДС — всё равно только электронно)",
+                     "п. 3 ст. 80 НК РФ",
+                     "https://www.consultant.ru/document/cons_doc_LAW_19671/b57ec74ce66c7a42202cfb47175a12ea4722bc99/"),
+    HeadcountBenefit("usn", 130, "Можно применять УСН: средняя численность работников не больше 130",
+                     "пп. 15 п. 3 ст. 346.12 НК РФ",
+                     "https://www.consultant.ru/document/cons_doc_LAW_28165/a1d86f7078e645869b02fde85e8c972193557dee/"),
+)
+
 CATEGORY_RU = {1: "Микропредприятие", 2: "Малое предприятие", 3: "Среднее предприятие"}
 
 # Коды регионов ФНС (businesses.region_code из реестра МСП)
@@ -77,3 +114,13 @@ class Profile:
     headcount: int | None = None     # нижняя граница диапазона из HEADCOUNT_RU
     hints: dict[str, str] = field(default_factory=dict)
     flags: dict[str, bool] = field(default_factory=dict)
+
+    def headcount_benefits(self) -> list[HeadcountBenefit]:
+        """Льготы, которым численность точно не мешает. headcount — нижняя граница диапазона,
+        поэтому сравниваем верхнюю: при «1–15 человек» порог АУСН (5) неизвестен и не попадёт."""
+        if self.headcount is None:
+            return []
+        upper = next((b - 1 for b in sorted(HEADCOUNT_RU) if b > self.headcount), None)
+        if upper is None:  # «больше 100 человек» — верхней границы нет
+            return []
+        return [b for b in HEADCOUNT_BENEFITS if upper <= b.limit and not (b.ip_only and self.is_legal_entity)]
