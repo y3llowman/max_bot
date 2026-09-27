@@ -11,7 +11,7 @@ _Обновлено: 27.09.2026. Идея продукта и правила р�
 | Всё в Docker | `docker compose up --build`: postgres, API на :8000 (отдаёт и собранное мини-приложение), бот вместе с планировщиком |
 | API локально | из корня: `python backend/main.py` (`.env` читается из текущей папки; `DATABASE_URL` на localhost:5433) |
 | Бот локально | из корня: `python backend/bot/main_longpooling.py` |
-| Мини-приложение | `cd miniapp && npm run dev`. Без `VITE_API_URL` работает на моках, подробности — [miniapp/README.md](miniapp/README.md) |
+| Мини-приложение | `cd frontend && npm run dev`. Без `VITE_API_URL` работает на моках, подробности — [frontend/README.md](frontend/README.md) |
 | Тесты | `python -m unittest discover -s tests`. Тесты с БД запускаются только при `TEST_DATABASE_URL=postgresql+asyncpg://…/пустая_база`: схему они пересоздают |
 
 Демо-сроки поверх настоящих: `python backend/seed_demo_tasks.py <ИНН>`. Добавляют просроченную и выполненную задачи.
@@ -48,9 +48,9 @@ _Обновлено: 27.09.2026. Идея продукта и правила р�
 | `radar/regulations.py`, `law_rules.py`, `law_ingest.py` | Лента законов (сверх ТЗ): правила классификации актов. Импорт в `law_ingest` исправлен | В планировщик не подключены, работают только в `notifications/demo3.py` |
 | `seed_demo_tasks.py` | Демо-сроки для защиты | — |
 
-**Мёртвый код от Telegram-шаблона** — не опирайтесь на него, не подключён: `bot/sender.py`, `bot/handlers/`, `backend/worker.py` (RabbitMQ), `app/api/routes/mailing.py`, `telegram.py`, папка `frontend/` (старый SvelteKit; Dockerfile собирает `miniapp/`), `docs/BACKEND_GUIDE.md` (описывает старую схему).
+**Мёртвый код от Telegram-шаблона** — не опирайтесь на него, не подключён: `bot/sender.py`, `bot/handlers/`, `backend/worker.py` (RabbitMQ), `app/api/routes/mailing.py`, `telegram.py`, `docs/BACKEND_GUIDE.md` (описывает старую схему).
 
-## Мини-приложение (`miniapp/`)
+## Мини-приложение (`frontend/`)
 
 React + Vite, экраны по макетам. Контракт — `src/api/types.ts`, моки — `src/api/mock.ts`.
 
