@@ -26,6 +26,7 @@ class Business(Base):
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     website: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    employees_num: Mapped[int] = mapped_column(Integer)
     has_licenses: Mapped[bool] = mapped_column(Boolean)
     is_hitech: Mapped[bool] = mapped_column(Boolean)
     is_partnership: Mapped[bool] = mapped_column(Boolean)
