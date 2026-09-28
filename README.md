@@ -1,6 +1,6 @@
 # MAX Mini App + FastAPI + PostgreSQL
 
-Шаблон для хакатона: Mini App внутри мессенджера MAX (React + Vite, папка `miniapp/`), FastAPI backend и PostgreSQL. Что сейчас умеет продукт — в [CURRENT_STATE.md](CURRENT_STATE.md).
+Шаблон для хакатона: Mini App внутри мессенджера MAX (React + Vite, папка `frontend/`), FastAPI backend и PostgreSQL. Что сейчас умеет продукт — в [CURRENT_STATE.md](CURRENT_STATE.md).
 
 ## Что было изменено относительно исходного шаблона
 
@@ -9,7 +9,7 @@
 ### Новый стек
 
 - **MAX Mini App / MAX Bridge** — окружение приложения внутри MAX.
-- **React + Vite + TypeScript** (`miniapp/`) — UI.
+- **React + Vite + TypeScript** (`frontend/`) — UI.
 - **FastAPI** — REST API.
 - **PostgreSQL** — основная БД.
 - **SQLAlchemy 2 async + asyncpg** — доступ к PostgreSQL.
@@ -111,7 +111,7 @@ docker compose down -v         # то же самое, но и данные Post
 
 ### Шаг 1 — MAX открывает frontend
 
-`miniapp/index.html` подключает MAX Bridge:
+`frontend/index.html` подключает MAX Bridge:
 
 ```html
 <script src="https://st.max.ru/js/max-web-app.js"></script>

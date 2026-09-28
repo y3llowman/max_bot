@@ -4,7 +4,7 @@ from pathlib import Path
 from .env import ENV
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-FRONTEND_DIR = BASE_DIR.parent / "miniapp" / "build"  # npm run build в miniapp/
+FRONTEND_DIR = BASE_DIR.parent / "frontend" / "build"  # npm run build в frontend/
 HOST = ENV.HOST
 PORT = ENV.PORT
 DEBUG = ENV.DEBUG

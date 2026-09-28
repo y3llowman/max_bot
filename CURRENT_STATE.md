@@ -9,9 +9,9 @@ _Обновлено: 27.09.2026 (численность из реестра МС
 | Что | Команда |
 |---|---|
 | Всё в Docker | `docker compose up --build`: postgres, API на :8000 (отдаёт и собранное мини-приложение), бот вместе с планировщиком |
-| API локально | из корня: `python backend/main.py` (`.env` читается из текущей папки; `DATABASE_URL` на localhost:5433). Статику берёт из `miniapp/build` — сначала `npm run build` в `miniapp/` |
+| API локально | из корня: `python backend/main.py` (`.env` читается из текущей папки; `DATABASE_URL` на localhost:5433). Статику берёт из `frontend/build` — сначала `npm run build` в `frontend/` |
 | Бот локально | из корня: `python backend/bot/main_longpooling.py` |
-| Мини-приложение | `cd miniapp && npm run dev`. Без `VITE_API_URL` работает на моках, подробности — [miniapp/README.md](miniapp/README.md) |
+| Мини-приложение | `cd frontend && npm run dev`. Без `VITE_API_URL` работает на моках, подробности — [frontend/README.md](frontend/README.md) |
 | Тесты | `python -m unittest discover -s tests`. Тесты с БД запускаются только при `TEST_DATABASE_URL=postgresql+asyncpg://…/пустая_база`: схему они пересоздают. Без Docker подойдёт локальный PostgreSQL: `initdb -D <папка> -U max -A trust`, `pg_ctl -D <папка> -o "-p 5544" start`, `createdb -p 5544 -U max maxtest` |
 
 Демо-сроки поверх настоящих: `python backend/seed_demo_tasks.py <ИНН>`. Добавляют просроченную и выполненную задачи.
@@ -54,9 +54,9 @@ _Обновлено: 27.09.2026 (численность из реестра МС
 | `radar/regulations.py`, `law_rules.py`, `law_ingest.py` | Лента законов (сверх ТЗ): правила классификации актов. API pravo.gov.ru проверено вживую: формат даты `ДД.ММ.ГГГГ`, ссылки на документы рабочие | Не подключены к планировщику — см. TODO |
 | `seed_demo_tasks.py` | Демо-сроки для защиты | — |
 
-Мёртвый код от Telegram-шаблона (`bot/sender.py`, `bot/handlers/`, RabbitMQ-воркер, роуты `mailing`/`telegram`, SvelteKit `frontend/`, `docs/BACKEND_GUIDE.md`) удалён.
+Мёртвый код от Telegram-шаблона (`bot/sender.py`, `bot/handlers/`, RabbitMQ-воркер, роуты `mailing`/`telegram`, старый SvelteKit, `docs/BACKEND_GUIDE.md`) удалён.
 
-## Мини-приложение (`miniapp/`)
+## Мини-приложение (`frontend/`)
 
 React + Vite, экраны по макетам. Контракт — `src/api/types.ts`, моки — `src/api/mock.ts`.
 
@@ -87,7 +87,7 @@ React + Vite, экраны по макетам. Контракт — `src/api/ty
 
 ## TODO
 
-- [ ] Выложить на сервер (72.56.0.157) исправление поиска по ИНН: в закоммиченной версии `RmspRecord.from_api` передаёт несуществующие поля `employee_count`/`svo_employee_count`, а `businesses.employees_num` — NOT NULL. В рабочей копии исправлено (`employees_num` из `od2_sschr`, колонка nullable, `NEW_COLUMNS` снимает NOT NULL со старой таблицы при старте). Проверено 28.09.2026: живой реестр (7743212897 → 1, 1650273744 → 8), все 51 тест на PostgreSQL, миграция на таблице со старой схемой.
+- [ ] Выложить на сервер (72.56.0.157) исправление поиска по ИНН: в закоммиченной версии `RmspRecord.from_api` передаёт несуществующие поля `employee_count`/`svo_employee_count`, а `businesses.employees_num` — NOT NULL. В `main` исправлено (`employees_num` из `od2_sschr`, колонка nullable, `NEW_COLUMNS` снимает NOT NULL со старой таблицы при старте). Проверено 28.09.2026: живой реестр (7743212897 → 1, 1650273744 → 8), все 51 тест на PostgreSQL, миграция на таблице со старой схемой.
 - [ ] HTTPS на сервере: 28.09.2026 Caddy на 72.56.0.157 редиректит :80 → :443, но на :443 обрывает рукопожатие (`tlsv1 alert internal error`) — сертификата для голого IP нет. MAX требует публичный HTTPS: указать в Caddyfile домен (свой или `72-56-0-157.sslip.io`), Caddy сам получит сертификат Let's Encrypt.
 
 - [ ] Прогнать сценарий из «Демо на защите» в настоящем MAX: open_app с `web_app` (открывается ли мини-приложение и доходит ли диплинк `task_<id>`), файл через `InputMediaBuffer`, callback-кнопки, `bot_started`.
