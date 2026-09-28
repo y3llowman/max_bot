@@ -183,7 +183,7 @@ async def hello(event: MessageCreated, context: BaseContext):
     await start(event.message.sender.user_id, context)
 
 
-# первый запуск бота кнопкой «Начать»
+# первый запуск бота 
 @dp.bot_started()
 async def on_bot_started(event: BotStarted, context: BaseContext):
     await start(event.user.user_id, context)
@@ -207,7 +207,7 @@ async def on_profile(event: MessageCreated):
 
 
 if DEBUG:
-    # Триггеры для демо: ждать 30 дней до напоминания или исключения из реестра на защите нельзя
+    # триггеры для демо
     @dp.message_created(Command("demo_remind"))
     async def on_demo_remind(event: MessageCreated):
         sent = await worker.demo_remind(event.message.sender.user_id)
