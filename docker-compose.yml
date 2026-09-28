@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: max
       POSTGRES_PASSWORD: max
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"  # только с самого сервера: пароль в этом файле
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -22,7 +22,7 @@ services:
       dockerfile: Dockerfile
     container_name: max_backend
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"  # снаружи — через Caddy (HTTPS)
     environment:
       DATABASE_URL: postgresql+asyncpg://max:max@postgres:5432/maxapp
       MAX_TOKEN: ${MAX_TOKEN}
