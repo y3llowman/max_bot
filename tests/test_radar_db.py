@@ -42,7 +42,7 @@ BOT_APP = {"web_app": "radar_bot", "contact_id": 999}  # bot.client.bot_app()
 RECORD = RmspRecord(
     name='ООО "СЕВЕРНЫЙ ВЕТЕР"', subject_type="UL", category=1, ogrn="1027700132195", inn=INN,
     main_activity_code="41.20", main_activity_name="Строительство жилых и нежилых зданий", region_code="16",
-    is_new=False, date_registered="10.08.2016", date_excluded=None, phone=None, email=None, website=None, employees_num=None,
+    is_new=False, date_registered="10.08.2016 00:00:00", date_excluded=None, phone=None, email=None, website=None, employees_num=None,
     has_licenses=False, is_hitech=False, is_partnership=False, is_social=False,
 )
 
@@ -169,7 +169,7 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         await worker.registry_loaded(INN, asdict(RECORD))
         self.assertEqual(await self.events(type="msp.excluded"), [])
 
-        excluded = asdict(replace(RECORD, date_excluded="10.07.2027"))
+        excluded = asdict(replace(RECORD, date_excluded="10.07.2027 00:00:00"))  # реестр отдаёт даты со временем
         self.assertEqual(len(await worker.process_msp(INN, excluded, TODAY)), 1)
         self.assertEqual(await worker.process_msp(INN, excluded, TODAY), [], "открытое состояние не дублируется")
         await worker.dispatch()

@@ -28,10 +28,11 @@ def plural(n: int, one: str, few: str, many: str) -> str:
 
 
 def as_date(d: date | str | None) -> date | None:
-    """Даты в radar_events.payload лежат строками (JSONB): ISO или «ДД.ММ.ГГГГ» из реестров."""
+    """Даты в radar_events.payload лежат строками (JSONB): ISO или «ДД.ММ.ГГГГ» из реестров
+    (реестр МСП добавляет время: «10.07.2017 00:00:00» — отбрасываем его)."""
     if not isinstance(d, str):
         return d
-    return datetime.strptime(d, "%d.%m.%Y").date() if "." in d else date.fromisoformat(d[:10])
+    return datetime.strptime(d[:10], "%d.%m.%Y").date() if "." in d else date.fromisoformat(d[:10])
 
 
 def date_ru(d: date | str | None) -> str:
