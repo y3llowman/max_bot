@@ -92,7 +92,8 @@ def company_ctx(egrul: dict | None, msp: dict | None, inn: str) -> dict:
 
 SOURCE_NAMES = {"egrul": "ЕГРЮЛ (ФНС)", "msp": "Единый реестр субъектов МСП (ФНС)",
                 "erknm": "Единый реестр контрольных (надзорных) мероприятий",
-                "pravo": "Официальный интернет-портал правовой информации (pravo.gov.ru)"}
+                "pravo": "Официальный интернет-портал правовой информации (pravo.gov.ru)",
+                "demo": "Имитация для демо (/demo), не данные реестра"}
 
 
 def build_context(event_type: str, payload: dict, company: dict, today: date,

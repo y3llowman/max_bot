@@ -384,6 +384,51 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 self.assertEqual((await client.post("/api/session", json={"inn": INN})).status_code, 503)
 
+    # ---- демо-тур /demo
+    async def test_demo_tour_covers_every_step_and_cleans_up(self):
+        from notifications import demo as tour
+        await self.answer("usn_income", 40)
+        async with SessionLocal() as db:  # один акт про бизнес — для шага «Новые законы»
+            db.add(worker.LawRecord(eo_number="0001202609250001", header="Федеральный закон от 24.09.2026 № 400-ФЗ",
+                                    name="О внесении изменений в Федеральный закон «О применении контрольно-кассовой техники»",
+                                    published=TODAY - timedelta(days=2), topics=["kkt", "usn"], amended=[], effective=[]))
+            await db.commit()
+        cards, shown = [], AsyncMock()
+        card = AsyncMock(side_effect=lambda uid, text, kb=None: cards.append((text, kb)))
+        with patch.object(tour, "send_html", card), patch.object(tour, "bot_app", AsyncMock(return_value=BOT_APP)), \
+                patch.object(worker.bot, "send_message", AsyncMock()) as files, \
+                patch.object(worker.pravo_client, "pdf", lambda eo: b"%PDF-1.4"):
+            worker._law_pdf.cache_clear()
+            await tour.intro(MAX_USER)
+            self.assertIn(f"Демо всех функций: {len(tour.STEPS)} шагов", cards[0][0])
+            for n in range(1, len(tour.STEPS) + 1):
+                sent_before = self.send.await_count
+                await tour.run(MAX_USER, str(n), shown)
+                text, kb = cards[-1]
+                self.assertIn(f"Шаг {n} из {len(tour.STEPS)}", text)
+                self.assertNotIn("⚠️", text, f"шаг {n}: {text}")
+                if tour.STEPS[n - 1].run not in (None, tour.profile):
+                    self.assertGreater(self.send.await_count, sent_before, f"шаг {n} ничего не прислал")
+            shown.assert_awaited_once()
+            self.assertEqual(kb["payload"]["buttons"][-1][0]["payload"], "demo:clean")
+            self.assertGreaterEqual(files.await_count, 3, "документы трёх видов и PDF закона")
+
+            texts = "\n".join(call.args[1] for call in self.send.await_args_list)
+            for expected in ("Запланирована проверка", "Запланирован профилактический визит", "предостережение",
+                             "отметка о недостоверности", "Отметка о недостоверности снята", "дисквалифицирован",
+                             "Срок дисквалификации руководителя истёк", "Компания в процессе прекращения",
+                             "Изменились сведения в ЕГРЮЛ: руководитель", "Уведомите МВД", "исключена из реестра МСП",
+                             "Изменилась категория МСП", "Компании нет в реестре МСП", "Вышел акт, который касается вас",
+                             "Вы принимаете оплату через кассу", "Имитация для демо"):
+                self.assertIn(expected, texts)
+
+            demo_events = await self.events(source="demo")
+            self.assertTrue(demo_events)
+            await tour.run(MAX_USER, "clean", shown)
+        self.assertIn(f"Убрали демо-события: {len(demo_events)}", cards[-1][0])
+        self.assertEqual(await self.events(source="demo"), [])
+        self.assertTrue(await self.events(type="deadline"), "настоящие сроки остались")
+
     # ---- документы и API мини-приложения
     async def test_miniapp_api_and_document(self):
         async with SessionLocal() as db:

@@ -19,6 +19,7 @@ from data_fetching import rmsp_client
 from databases.businesses_db import Business, current_business, save_business
 from databases.engine_start import SessionLocal
 from databases.users_db import User
+from notifications import demo as demo_tour
 from notifications import worker
 from notifications.models import BusinessProfile, RadarEvent
 from radar.deadlines import CATEGORY_RU, HEADCOUNT_RU, REGIME_RU, Profile, headcount_ru, region_name
@@ -227,6 +228,27 @@ if DEBUG:
     @dp.message_created(Command("demo_law"))
     async def on_demo_law(event: MessageCreated):
         await event.message.answer(await worker.demo_law(event.message.sender.user_id))
+
+    async def show_profile(max_user_id: int) -> None:
+        """Шаг тура «Профиль и обязанности»: то же, что бот присылает после ИНН и ответов на вопросы."""
+        async with SessionLocal() as db:
+            user = await find_user(db, max_user_id)
+            business = await current_business(db, user.id)
+            profile = await worker.load_profile(db, business.inn)
+        app = app_keyboard(await bot_app())
+        await say(max_user_id, "Нашли вашу компанию:\n" + company_card(business, profile), app)
+        await say(max_user_id, await obligations_summary(business.inn), app)
+
+    # полный демо-сценарий по шагам (notifications/demo.py)
+    @dp.message_created(Command("demo"))
+    async def on_demo(event: MessageCreated):
+        await demo_tour.intro(event.message.sender.user_id)
+
+    @dp.message_callback(F.callback.payload.startswith("demo:"))
+    async def on_demo_step(event: MessageCallback):
+        await event.answer()
+        max_user_id = event.callback.user.user_id
+        await demo_tour.run(max_user_id, event.callback.payload.removeprefix("demo:"), lambda: show_profile(max_user_id))
 
 @dp.message_created(states=OrderState.waiting_for_inn)
 async def on_inn(event: MessageCreated, context: BaseContext):

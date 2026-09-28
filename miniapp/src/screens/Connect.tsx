@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError, api } from "../api/client";
 import { ActionBar, ActionNote } from "../components/ActionBar";
 import { Alert } from "../components/Alert";
@@ -29,9 +29,10 @@ export function Connect() {
   const [busy, setBusy] = useState(false);
   const { setCompany } = useSession();
   const navigate = useNavigate();
-  const location = useLocation();
+  const [params] = useSearchParams();
   const toast = useToast();
-  const changing = (location.state as { change?: boolean } | null)?.change === true;
+  // флаг — в адресе, а не в history.state: так переход не зависит от того, как WebView MAX обращается с историей
+  const changing = params.get("change") === "1";
 
   const check = checkInn(inn);
   // Ошибку показываем после ухода из поля или когда введено 10+ цифр — не на каждой первой цифре.

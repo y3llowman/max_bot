@@ -1,5 +1,8 @@
 import type { ReactNode } from "react";
 import { Navigate, Outlet, RouterProvider, createHashRouter } from "react-router-dom";
+import { Button } from "./components/Button";
+import { APP_NAME, Screen } from "./components/Screen";
+import { StateView } from "./components/StateView";
 import { TabBar } from "./components/TabBar";
 import { ToastProvider } from "./components/Toast";
 import { CalendarScreen } from "./screens/Calendar";
@@ -34,21 +37,45 @@ function TabsLayout() {
   );
 }
 
+/** Сбой при отрисовке экрана — вместо служебной страницы react-router. */
+function RouteError() {
+  return (
+    <Screen title={APP_NAME}>
+      <StateView
+        tone="danger"
+        icon="alert-circle"
+        title="Что-то пошло не так"
+        text="Экран не открылся. Перезапустите приложение — данные компании и задачи сохранены."
+        actions={
+          <Button size="m" onClick={() => window.location.replace(window.location.pathname)}>
+            Перезапустить
+          </Button>
+        }
+      />
+    </Screen>
+  );
+}
+
 // Хеш-роутинг: статический хостинг не нужно настраивать на переадресацию путей.
 const router = createHashRouter([
-  { path: "/", element: <Launch /> },
-  { path: "/connect", element: <Connect /> },
   {
-    element: <TabsLayout />,
+    errorElement: <RouteError />,
     children: [
-      { path: "/tasks", element: <Dashboard /> },
-      { path: "/calendar", element: <CalendarScreen /> },
-      { path: "/profile", element: <Profile /> },
+      { path: "/", element: <Launch /> },
+      { path: "/connect", element: <Connect /> },
+      {
+        element: <TabsLayout />,
+        children: [
+          { path: "/tasks", element: <Dashboard /> },
+          { path: "/calendar", element: <CalendarScreen /> },
+          { path: "/profile", element: <Profile /> },
+        ],
+      },
+      { path: "/task/:id", element: <RequireSession><TaskScreen /></RequireSession> },
+      { path: "/notifications", element: <RequireSession><Notifications /></RequireSession> },
+      { path: "*", element: <Navigate to="/" replace /> },
     ],
   },
-  { path: "/task/:id", element: <RequireSession><TaskScreen /></RequireSession> },
-  { path: "/notifications", element: <RequireSession><Notifications /></RequireSession> },
-  { path: "*", element: <Navigate to="/" replace /> },
 ]);
 
 export function App() {

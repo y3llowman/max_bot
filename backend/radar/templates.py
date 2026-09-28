@@ -269,7 +269,7 @@ TEMPLATES["inspection.planned"] = """{% import "_m" as m with context %}
 <b>Что произошло</b>
 {{ ev.authority }} планирует {{ ev.kind }} с {{ ev.start|date_ru }} — {{ ev.start|rel }}.
 {{ (ev.type_name ~ ". ") if ev.type_name else "" }}Вид контроля: {{ ev.control }}.
-<i>Источник: Единый реестр контрольных (надзорных) мероприятий, данные на {{ src.fetched_at|date_ru }}</i>
+{{ m.source() }}
 
 <b>Что сделать</b>
 {% if visit %}
@@ -288,7 +288,7 @@ TEMPLATES["inspection.warning"] = """{% import "_m" as m with context %}
 <b>Что произошло</b>
 {{ ev.authority }} объявил предостережение о недопустимости нарушения обязательных требований{{ (" " ~ ev.date|date_ru) if ev.date else "" }}. Вид контроля: {{ ev.control }}.
 {% if ev.text %}«{{ ev.text|truncate(600) }}»
-{% endif %}<i>Источник: Единый реестр контрольных (надзорных) мероприятий, данные на {{ src.fetched_at|date_ru }}</i>
+{% endif %}{{ m.source() }}
 
 <b>Что это значит</b>
 Предостережение — не штраф. Орган видит признаки нарушения и может перейти к проверке.

@@ -77,7 +77,7 @@ export function Profile() {
             onChange: (v) => setThemePref(v as ThemePref),
           }}
         />
-        <ListCell title="Сменить компанию" chevron onClick={() => navigate("/connect", { state: { change: true } })} />
+        <ListCell title="Сменить компанию" chevron onClick={() => navigate("/connect?change=1")} />
       </ListGroup>
     </Screen>
   );

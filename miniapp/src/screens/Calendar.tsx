@@ -4,7 +4,6 @@ import { api } from "../api/client";
 import type { Task } from "../api/types";
 import { Button } from "../components/Button";
 import { MonthGrid, WeekStrip, monthGridStart, monthWeeks } from "../components/Calendar";
-import { Chip } from "../components/Chip";
 import { Screen } from "../components/Screen";
 import { SectionHeader } from "../components/SectionHeader";
 import { Segmented } from "../components/Segmented";
@@ -41,11 +40,12 @@ export function CalendarScreen() {
   );
 }
 
-/** 05 · Неделя и S6 · Неделя пусто. Под неделей — дни со сроками; тап по дню прокручивает к нему. */
+/** 05 · Неделя и S6 · Неделя пусто. Под неделей — сроки выбранного дня, как в «Месяце»: тап по дню
+ *  переключает список. В другой неделе, пока день не выбран, — первый день со сроками. */
 function WeekView() {
   const now = today();
   const [monday, setMonday] = useState(() => startOfWeek(now));
-  const [selected, setSelected] = useState<Date | null>(now);
+  const [picked, setPicked] = useState<Date | null>(now);
   const from = toISO(monday);
   const to = toISO(addDays(monday, 6));
   const { data, error, loading, reload } = useAsync(() => api.calendar(from, to), [from]);
@@ -53,18 +53,17 @@ function WeekView() {
   const shift = (weeks: number) => {
     const next = addDays(monday, weeks * 7);
     setMonday(next);
-    setSelected(sameDay(startOfWeek(now), next) ? now : null);
-  };
-
-  const select = (d: Date) => {
-    setSelected(d);
-    document.getElementById(`day-${toISO(d)}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setPicked(sameDay(startOfWeek(now), next) ? now : null);
   };
 
   const tasks = data ?? [];
+  const firstBusy = [...tasks].sort(byDue)[0];
+  const selected = picked ?? (firstBusy ? parseISO(firstBusy.due) : monday);
+  const dayTasks = tasks.filter((t) => t.due === toISO(selected)).sort(byDue);
+  const isToday = sameDay(selected, now);
   return (
     <>
-      <WeekStrip monday={monday} today={now} selected={selected} tasks={tasks} title={weekRange(monday)} onSelect={select} onShift={shift} />
+      <WeekStrip monday={monday} today={now} selected={selected} tasks={tasks} title={weekRange(monday)} onSelect={setPicked} onShift={shift} />
       {loading ? (
         <>
           <CardSkeleton />
@@ -75,24 +74,16 @@ function WeekView() {
       ) : tasks.length === 0 ? (
         <WeekEmpty weekEnd={to} onNext={() => shift(1)} />
       ) : (
-        groupByDay(tasks).map(([iso, list]) => <DayGroup key={iso} date={parseISO(iso)} tasks={list} now={now} />)
+        <>
+          <SectionHeader title={`${dayTitle(selected)}${isToday ? " · сегодня" : ""}`} count={dayTasks.length} />
+          {dayTasks.length > 0 ? (
+            dayTasks.map((t) => <TaskCard key={t.id} task={t} />)
+          ) : (
+            <p className="t-detail c-secondary">В этот день сроков нет — дни со сроками отмечены точками</p>
+          )}
+        </>
       )}
     </>
-  );
-}
-
-function DayGroup({ date, tasks, now }: { date: Date; tasks: Task[]; now: Date }) {
-  const isToday = sameDay(date, now);
-  return (
-    <section className={s.day} id={`day-${toISO(date)}`}>
-      <div className={s.dayHead}>
-        <h3 className={`t-label-strong ${isToday ? "c-accent" : "c-secondary"}`}>{dayTitle(date)}</h3>
-        {isToday && <Chip tone="primary">Сегодня</Chip>}
-      </div>
-      {tasks.map((t) => (
-        <TaskCard key={t.id} task={t} />
-      ))}
-    </section>
   );
 }
 
@@ -231,8 +222,3 @@ function CalendarError({ onRetry }: { onRetry: () => void }) {
   );
 }
 
-function groupByDay(tasks: Task[]): [string, Task[]][] {
-  const map = new Map<string, Task[]>();
-  for (const t of [...tasks].sort(byDue)) map.set(t.due, [...(map.get(t.due) ?? []), t]);
-  return [...map.entries()];
-}
