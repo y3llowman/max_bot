@@ -53,8 +53,8 @@ def to_task(event: RadarEvent, today: date) -> Task:
 
 def to_sections(payload: dict) -> list[TaskSection]:
     """Разделы экрана задачи из payload события радара. Обязанности (radar/obligations.py) дают
-    what, how, where, format, basis, penalty, why; лента законов (regulations.feed_events) —
-    summary, actions, reasons, act. id разделов — как в макете: why и risks фронт раскрывает сразу."""
+    what, how, where, format, basis, penalty, why; новые законы (radar/laws.drafts) —
+    summary, actions, reasons, act, basis_url. id разделов — как в макете: why и risks фронт раскрывает сразу."""
     def lines(*keys: str) -> list[str] | None:
         value = next((payload[key] for key in keys if payload.get(key)), None)
         if value is None:

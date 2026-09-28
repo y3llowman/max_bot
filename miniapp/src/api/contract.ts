@@ -2,7 +2,8 @@
 // чтобы они не импортировали друг друга.
 import type { Company, DashboardData, NotificationSettings, Task, TaskDetails } from "./types";
 
-export type ApiErrorCode = "not_found" | "network" | "server" | "unauthorized";
+/** unavailable — не ответил внешний источник (реестр ФНС), server — ошибка нашего сервера. */
+export type ApiErrorCode = "not_found" | "network" | "server" | "unavailable" | "unauthorized";
 
 export class ApiError extends Error {
   code: ApiErrorCode;

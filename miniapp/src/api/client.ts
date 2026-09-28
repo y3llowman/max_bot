@@ -59,6 +59,7 @@ async function request<T>(method: string, path: string, body?: unknown, retry = 
   }
   if (res.status === 401) throw new ApiError("unauthorized", "Сессия не подтверждена");
   if (res.status === 404) throw new ApiError("not_found", "Не найдено");
+  if (res.status === 503) throw new ApiError("unavailable", "Реестр ФНС не отвечает");
   if (!res.ok) throw new ApiError("server", `Ошибка сервера ${res.status}`);
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
 }

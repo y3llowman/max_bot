@@ -80,7 +80,7 @@ def cap1(s: str) -> str:
 
 
 env.filters.update(cap1=cap1, date_ru=date_ru, date_short=date_short, rel=rel, fio=fio,
-                   fio_short=fio_short, plural=plural)
+                   fio_short=fio_short, plural=plural, as_date=as_date)
 
 
 # ----------------------------------------------------------------- контекст
@@ -91,7 +91,8 @@ def company_ctx(egrul: dict | None, msp: dict | None, inn: str) -> dict:
 
 
 SOURCE_NAMES = {"egrul": "ЕГРЮЛ (ФНС)", "msp": "Единый реестр субъектов МСП (ФНС)",
-                "erknm": "Единый реестр контрольных (надзорных) мероприятий"}
+                "erknm": "Единый реестр контрольных (надзорных) мероприятий",
+                "pravo": "Официальный интернет-портал правовой информации (pravo.gov.ru)"}
 
 
 def build_context(event_type: str, payload: dict, company: dict, today: date,
@@ -135,20 +136,11 @@ def keyboard(event_ids: list[int], source_url: str | None = None, docs: list | N
     return {"type": "inline_keyboard", "payload": {"buttons": rows}}
 
 
-def message_body(text: str, event_ids: list[int] | None = None, source_url: str | None = None,
-                 docs: list | None = None) -> dict:
-    body: dict = {"text": text, "format": "html"}
-    if event_ids:
-        body["attachments"] = [keyboard(event_ids, source_url, docs)]
-    return body
-
-
-def question_body(text: str, flag: str) -> dict:
-    """Ответ сохраняем в business_profiles.flags и перезапускаем матчинг ленты."""
-    row = [{"type": "callback", "text": t, "payload": f"q:{flag}:{v}"}
-           for t, v in (("Да", "yes"), ("Нет", "no"), ("Не знаю", "skip"))]
-    return {"text": text, "format": "html",
-            "attachments": [{"type": "inline_keyboard", "payload": {"buttons": [row]}}]}
+def flag_keyboard(flag: str) -> dict:
+    """Вопрос о признаке компании (radar.laws.FLAGS): ответ — в business_profiles.flags, «да» досылает акты."""
+    row = [{"type": "callback", "text": text, "payload": f"flag:{flag}:{value}"}
+           for text, value in (("Да", "yes"), ("Нет", "no"))]
+    return {"type": "inline_keyboard", "payload": {"buttons": [row]}}
 
 
 SOURCE_URLS = {"egrul": "https://egrul.nalog.ru/", "msp": "https://rmsp.nalog.ru/",

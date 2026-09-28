@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qsl
 
 from fastapi import HTTPException, status
@@ -10,6 +11,11 @@ from jose import JWTError, jwt
 from core.config import MAX_BOT_TOKEN, MAX_INIT_DATA_MAX_AGE, SECRET_KEY
 
 ALGORITHM = "HS256"
+TOKEN_TTL = timedelta(hours=12)  # мини-приложение на 401 заново входит по initData
+
+# Ключ по умолчанию в публичном репозитории или пустой ключ — это подделка токенов любым желающим
+if len(SECRET_KEY.get_secret_value()) < 32:
+    raise RuntimeError("SECRET_KEY не задан или короче 32 символов: `openssl rand -hex 32` → SECRET_KEY=… в .env")
 
 def validate_max_init_data(init_data: str) -> dict:
     """Validate MAX Mini App initData and return the trusted user object."""
@@ -51,7 +57,8 @@ def validate_max_init_data(init_data: str) -> dict:
 
 
 def create_access_token(user_id: int) -> str:
-    return jwt.encode({"sub": str(user_id)}, SECRET_KEY.get_secret_value(), algorithm=ALGORITHM)
+    expires = datetime.now(timezone.utc) + TOKEN_TTL
+    return jwt.encode({"sub": str(user_id), "exp": expires}, SECRET_KEY.get_secret_value(), algorithm=ALGORITHM)
 
 
 def decode_access_token(token: str) -> int:

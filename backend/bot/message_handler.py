@@ -82,11 +82,12 @@ def app_keyboard(app: dict):
     return ButtonsPayload(buttons=[[OpenAppButton(text="Открыть ленту обязанностей", **app)]]).pack()
 
 
-def question_keyboard(question: str):
+def question_keyboard(question: str, legal_entity: bool):
     _, options = QUESTIONS[question]
     return ButtonsPayload(buttons=[
         [CallbackButton(text=label[:1].upper() + label[1:], payload=f"q:{question}:{value}")]
         for value, label in options.items()
+        if not (legal_entity and value == "psn")  # патент — только для ИП (ст. 346.43 НК РФ)
     ]).pack()
 
 
@@ -133,9 +134,9 @@ async def next_step(max_user_id: int) -> None:
     if business is None:
         await say(max_user_id, ASK_INN)
     elif profile.tax_regime is None:
-        await say(max_user_id, QUESTIONS["regime"][0], question_keyboard("regime"))
+        await say(max_user_id, QUESTIONS["regime"][0], question_keyboard("regime", profile.is_legal_entity))
     elif profile.headcount is None:
-        await say(max_user_id, QUESTIONS["staff"][0], question_keyboard("staff"))
+        await say(max_user_id, QUESTIONS["staff"][0], question_keyboard("staff", profile.is_legal_entity))
     else:
         await say(max_user_id, await obligations_summary(business.inn), app_keyboard(await bot_app()))
 
@@ -156,15 +157,14 @@ async def _save_business(max_user_id: int, sender, record: rmsp_client.RmspRecor
         return await save_business(db, user.id, record)
 
 
-def _on_radar_done(task: asyncio.Task) -> None:
-    if not task.cancelled() and task.exception() is not None:
-        logger.error("Radar processing failed", exc_info=task.exception())
+_background: set[asyncio.Task] = set()  # ссылки на фоновые задачи: без них задачу может собрать сборщик мусора
 
 
 def _start_radar(inn: str) -> None:
-    """Медленные источники — в фоне: выписка ЕГРЮЛ и выгрузки ЕРКНМ."""
-    for job in (worker.process_egrul(inn, date.today()), worker.process_inspections({inn}, date.today())):
-        asyncio.create_task(job).add_done_callback(_on_radar_done)
+    """Медленные источники — в фоне: выписка ЕГРЮЛ и выгрузки ЕРКНМ (ошибки логирует сам scan_in_background)."""
+    task = asyncio.create_task(worker.scan_in_background(inn))
+    _background.add(task)
+    task.add_done_callback(_background.discard)
 
 
 async def start(max_user_id: int, context: BaseContext) -> None:
@@ -205,6 +205,11 @@ async def on_profile(event: MessageCreated):
         [OpenAppButton(text="Открыть ленту обязанностей", **await bot_app())],
     ]).pack())
 
+# @dp.message_created(Command("demo_mode"))
+#     async def on_demo_remind(event: MessageCreated):
+#         sent = await worker.demo_remind(event.message.sender.user_id)
+#         if not sent:
+#             await event.message.answer("Открытых сроков нет — сначала подключите компанию: пришлите ИНН.")
 
 if DEBUG:
     # триггеры для демо
@@ -219,16 +224,13 @@ if DEBUG:
         args = event.message.body.text.split()[1:]
         await event.message.answer(await worker.demo_event(event.message.sender.user_id, args[0] if args else ""))
 
-
-@dp.message_created(F.message.body.text == "привет")
-async def on_hello(event: MessageCreated):
-    await event.message.answer("Привет!")
-
+    @dp.message_created(Command("demo_law"))
+    async def on_demo_law(event: MessageCreated):
+        await event.message.answer(await worker.demo_law(event.message.sender.user_id))
 
 @dp.message_created(states=OrderState.waiting_for_inn)
 async def on_inn(event: MessageCreated, context: BaseContext):
-    # inn = (event.message.body.text or "").strip()
-    inn = event.message.body.text.strip()
+    inn = (event.message.body.text or "").strip()  # фото и стикеры приходят без текста
     logger.info("Пользователь %s ввёл ИНН: %s", 'тип:' + str(type(inn)), 'ИНН:' + inn)
 
     if not is_valid_inn(inn):
@@ -242,7 +244,12 @@ async def on_inn(event: MessageCreated, context: BaseContext):
     if event.message.sender is None:
         return
 
-    record = await asyncio.to_thread(rmsp_client.fetch_by_inn, inn)
+    try:
+        record = await asyncio.to_thread(rmsp_client.fetch_by_inn, inn)
+    except Exception:
+        logger.exception("rmsp lookup failed for %s", inn)
+        await event.message.answer("Реестр МСП (ФНС) сейчас не отвечает. Пришлите ИНН ещё раз через пару минут.")
+        return
     if record is None:
         await event.message.answer(
             f"Компанию с ИНН {inn} не нашли в реестре МСП. "
@@ -273,8 +280,11 @@ async def on_inn_any_state(event: MessageCreated, context: BaseContext):
 async def on_ask(event: MessageCallback):
     await event.answer()
     question = event.callback.payload.removeprefix("ask:")
-    await say(event.callback.user.user_id, QUESTIONS[question][0], question_keyboard(question))
-
+    async with SessionLocal() as db:
+        user = await find_user(db, event.callback.user.user_id)
+        business = await current_business(db, user.id) if user else None
+    await say(event.callback.user.user_id, QUESTIONS[question][0],
+              question_keyboard(question, business is not None and business.subject_type == "UL"))
 
 @dp.message_callback(F.callback.payload.startswith("q:"))
 async def on_answer(event: MessageCallback):
@@ -317,6 +327,13 @@ async def on_answer(event: MessageCallback):
     await say(max_user_id, "\n".join(lines), app_keyboard(await bot_app()))
 
 
+@dp.message_callback(F.callback.payload.startswith("flag:"))
+async def on_flag(event: MessageCallback):
+    """Вопрос о признаке компании перед рассылкой акта: flag:<признак>:yes|no (radar.render.flag_keyboard)."""
+    _, flag, value = event.callback.payload.split(":")
+    await event.answer(notification=await worker.answer_flag(event.callback.user.user_id, flag, value == "yes"))
+
+
 @dp.message_callback(F.callback.payload.startswith("ev:"))
 async def on_event_action(event: MessageCallback):
     """Кнопки под напоминанием: ev:<ids>:done|snooze1d|mute (radar.render.keyboard)."""
@@ -336,3 +353,13 @@ async def on_document(event: MessageCallback):
             return
         await event.answer(notification="Готовим документ…")
         await worker.send_document(db, events[0], max_user_id)
+
+
+# Последним: всё, что не ИНН, не команда и не кнопка. Без него бот молчал бы.
+@dp.message_created()
+async def on_other(event: MessageCreated):
+    await event.message.answer(
+        "Я слежу за вашей компанией сам и пишу, когда появляется то, что касается именно её: "
+        "новый закон, срок, запись в реестре.\n\n"
+        "Пришлите ИНН — подключу компанию или сменю её. /profile — профиль компании, /start — продолжить настройку."
+    )

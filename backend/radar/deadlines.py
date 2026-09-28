@@ -126,8 +126,8 @@ class Profile:
     has_employees: bool | None = None
     headcount: int | None = None     # точное число из реестра или нижняя граница диапазона из HEADCOUNT_RU
     headcount_exact: bool = False    # True — среднесписочная из реестра МСП
-    hints: dict[str, str] = field(default_factory=dict)
-    flags: dict[str, bool] = field(default_factory=dict)
+    has_licenses: bool = False       # признак лицензий из реестра МСП
+    flags: dict[str, bool] = field(default_factory=dict)   # ответы «да/нет» на вопросы radar.laws.FLAGS
 
     def headcount_benefits(self) -> list[HeadcountBenefit]:
         """Льготы, которым численность точно не мешает. Для диапазона сравниваем его верхнюю границу:

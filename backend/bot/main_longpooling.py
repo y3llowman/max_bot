@@ -30,7 +30,13 @@ logger = logging.getLogger(__file__)
 from message_handler import dp  # noqa: E402
 from bot.client import bot  # noqa: E402
 from databases import init_db  # noqa: E402
-from notifications.worker import build_scheduler, queue_reminders  # noqa: E402
+from notifications.worker import build_scheduler, queue_reminders, start_laws  # noqa: E402
+
+
+def _log_failure(task: asyncio.Task) -> None:
+    if not task.cancelled() and task.exception() is not None:
+        logger.error("Background task failed", exc_info=task.exception())
+
 
 async def main():
     await init_db()
@@ -38,6 +44,9 @@ async def main():
     scheduler = build_scheduler()
     scheduler.start()
     await queue_reminders()  # если бот лежал в 09:00 — напоминания на сегодня всё равно уйдут
+    # акты pravo.gov.ru: при первом запуске — месяц без рассылки, иначе догнать 07:00; минуты — в фоне
+    laws_task = asyncio.create_task(start_laws())  # ссылка живёт, пока работает main()
+    laws_task.add_done_callback(_log_failure)
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
 

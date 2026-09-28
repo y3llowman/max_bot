@@ -1,7 +1,7 @@
 import asyncio
+import logging
 import re
 from dataclasses import asdict
-from datetime import date
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -15,8 +15,10 @@ from databases import get_db
 from databases.businesses_db import Business, save_business
 from databases.users_db import User
 from notifications.models import RegistrySnapshot
-from notifications.worker import load_profile, process_egrul, process_inspections, registry_loaded
+from notifications.worker import load_profile, registry_loaded, scan_in_background
 from radar.deadlines import CATEGORY_RU, REGIME_RU, headcount_ru, region_name
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["company"])
 
@@ -57,12 +59,25 @@ async def to_company(db: AsyncSession, business: Business) -> Company:
 
 
 async def load_from_registry(db: AsyncSession, user: User, inn: str) -> Business:
-    record = await asyncio.to_thread(rmsp_client.fetch_by_inn, inn)
+    try:
+        record = await asyncio.to_thread(rmsp_client.fetch_by_inn, inn)
+    except Exception as exc:  # ФНС не ответила — 503, чтобы мини-приложение не путало это с ошибкой сервера
+        raise HTTPException(status_code=503, detail="SME registry is unavailable") from exc
     if record is None:
         raise HTTPException(status_code=404, detail="INN not found in the SME registry")
     business = await save_business(db, user.id, record)
     await registry_loaded(inn, asdict(record))
     return business
+
+
+async def continue_in_chat(max_user_id: int) -> None:
+    """Компанию подключили в мини-приложении — бот продолжает в чате: вопрос о режиме или численности,
+    а если профиль полный — список обязанностей. Иначе дашборд просит «ответить в чате», а там пусто."""
+    from bot.message_handler import next_step  # логика онбординга живёт в боте; импорт не запускает polling
+    try:
+        await next_step(max_user_id)
+    except Exception:  # MAX не даёт писать тем, кто не запускал бота
+        logger.exception("could not continue onboarding in chat for %s", max_user_id)
 
 
 @router.get("/session", response_model=Company, response_model_exclude_none=True)
@@ -82,9 +97,9 @@ async def connect_company(
     db: AsyncSession = Depends(get_db),
 ):
     business = await load_from_registry(db, user, payload.inn)
+    background.add_task(continue_in_chat, user.max_user_id)  # первым: фоновые задачи идут по очереди
     # выписка ЕГРЮЛ (КПП, адрес, директор — для документов) и выгрузки ЕРКНМ скачиваются медленно — в фоне
-    background.add_task(process_egrul, business.inn, date.today())
-    background.add_task(process_inspections, {business.inn}, date.today())
+    background.add_task(scan_in_background, business.inn)
     return await to_company(db, business)
 
 
@@ -98,6 +113,5 @@ async def refresh_company(
     """«Обновить» в профиле и «Просканировать сейчас» на дашборде: реестр МСП сразу, ЕГРЮЛ и ЕРКНМ — в фоне,
     находки придут в чат."""
     business = await load_from_registry(db, user, business.inn)
-    background.add_task(process_egrul, business.inn, date.today())
-    background.add_task(process_inspections, {business.inn}, date.today())
+    background.add_task(scan_in_background, business.inn)  # идёт прошлая проверка — новая не запустится
     return await to_company(db, business)

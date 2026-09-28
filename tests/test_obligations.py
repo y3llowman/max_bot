@@ -67,6 +67,10 @@ class ApplicabilityTest(unittest.TestCase):
         codes = applicable(Profile(inn="7701234567", is_legal_entity=True, tax_regime="osno", has_employees=False))
         self.assertEqual(codes, {"vat_decl", "profit_decl", "enp", "buh"})
 
+    def test_osno_ip_files_vat(self):
+        codes = applicable(Profile(inn="500100732259", is_legal_entity=False, tax_regime="osno", has_employees=False))
+        self.assertEqual(codes, {"vat_decl", "ip_3ndfl", "enp", "ip_contrib"})
+
     def test_why_is_filled(self):
         p = Profile(inn="7701234567", is_legal_entity=True, tax_regime="usn_ie", has_employees=True, headcount=36)
         for o in OBLIGATIONS:

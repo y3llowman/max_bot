@@ -202,54 +202,44 @@ TEMPLATES["msp.flags_changed"] = """{% import "_m" as m with context %}
 """
 
 TEMPLATES["law.upcoming"] = """{% import "_m" as m with context %}
-{{ m.head(ev.title) }}
+{{ m.head("Вышел акт, который касается вас") }}
 
-<b>Что меняется</b>
-{{ ev.summary }}
-{{ ("Вступает в силу " ~ ev.effective_from|date_ru ~ " — " ~ ev.effective_from|rel ~ ".") if ev.effective_from else "Дата вступления в силу в тексте не найдена — проверьте по ссылке." }}
-<i>{{ ev.act }}. {{ "Официальный текст — pravo.gov.ru." if ev.official else "Источник — публикация в СМИ; ссылку на официальный текст модератор ещё не приложил." }}</i>
+<b>Что вышло</b>
+{{ ev.act }}
+«{{ ev.title }}»
+{% for a in ev.amended %}
+• Изменяет: {{ a }}
+{% endfor %}
+{% if ev.effective_from and (ev.effective_from|as_date) > today %}
+Вступает в силу {{ ev.effective_from|date_ru }} — {{ ev.effective_from|rel }}.{{ (" Отдельные положения — с " ~ ev.effective_other|map("date_ru")|join(", ") ~ ".") if ev.effective_other else "" }}
+{% elif ev.effective_from %}
+Действует с {{ ev.effective_from|date_ru }}.{{ (" Отдельные положения — с " ~ ev.effective_other|map("date_ru")|join(", ") ~ ".") if ev.effective_other else "" }}
+{% else %}
+Дату вступления в силу смотрите в тексте акта.
+{% endif %}
+<i>Источник: {{ src.name }}, опубликован {{ ev.published|date_ru }}</i>
 
 <b>Почему вам</b>
 {{ ev.reasons|join("; ")|cap1 }}.
-{% if ev.evidence %}
-
-<b>Где в тексте</b>
-{% for q in ev.evidence %}
-• {{ q.label }}: «…{{ q.quote }}…»
-{% endfor %}
+{% if ev.obligations %}
+Может изменить ваши задачи: {{ ev.obligations|join(", ") }}.
 {% endif %}
 
 <b>Что сделать</b>
 {% for a in ev.actions %}
 {{ loop.index }}. {{ a }}
 {% endfor %}
+
+<i>Тему акта бот определил по его названию и изменяемым актам, а не по полному тексту — сверьтесь с текстом.</i>
 """
 
 TEMPLATES["profile.question"] = """
 ❓ <b>{{ ev.question }}</b>
-{{ ev.hint or "" }}
-{{ ("В тексте акта: «…" ~ ev.quote ~ "…»") if ev.quote else "" }}
 
-{% if ev.effective_from %}
-Спрашиваем, потому что {{ ev.effective_from|date_ru }} вступает в силу: «{{ ev.because }}». Если это про вас — пришлём, что сделать.
-{% else %}
-Спрашиваем, чтобы понять, касается ли вас: «{{ ev.because }}».
-{% endif %}
-"""
+Вышел акт, который может вас касаться:
+{{ ev.act }} «{{ ev.because }}».
 
-TEMPLATES["support.open"] = """{% import "_m" as m with context %}
-{{ m.head("Мера поддержки: " ~ ev.title) }}
-
-{{ ev.summary }}
-{{ ("Приём заявок до " ~ ev.effective_from|date_ru ~ " — " ~ ev.effective_from|rel ~ ".") if ev.effective_from else "" }}
-
-<b>Почему вам</b>
-{{ ev.reasons|join("; ")|cap1 }}.
-
-<b>Что сделать</b>
-{% for a in ev.actions %}
-{{ loop.index }}. {{ a }}
-{% endfor %}
+Ответьте — если это про вас, пришлём акт с официальным текстом. Ответ запомним и по этой теме больше не спросим.
 """
 
 TEMPLATES["bank.blocked"] = """{% import "_m" as m with context %}

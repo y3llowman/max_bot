@@ -1,12 +1,13 @@
 from dataclasses import asdict
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, func, select
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from data_fetching.rmsp_client import RmspRecord
 from databases.users_db import Base
+from notifications.models import Notification, RadarEvent
 
 
 class Business(Base):
@@ -47,7 +48,9 @@ class UserBusiness(Base):
 
 
 async def save_business(db: AsyncSession, user_id: int, record: RmspRecord) -> Business:
-    """Сохраняет компанию из реестра МСП и делает её текущей у пользователя. Общее для бота и API."""
+    """Сохраняет компанию из реестра МСП и делает её текущей у пользователя. Общее для бота и API.
+    Прежняя компания пользователя отвязывается: напоминания и события идут по всем связанным ИНН,
+    и опечатка в ИНН иначе означала бы чужие сроки навсегда."""
     now = datetime.now(timezone.utc)
 
     business = await db.get(Business, record.inn) or Business(inn=record.inn)
@@ -56,6 +59,13 @@ async def save_business(db: AsyncSession, user_id: int, record: RmspRecord) -> B
         setattr(business, field, value)
     business.updated_at = now
     db.add(business)
+
+    others = select(UserBusiness.inn).where(UserBusiness.user_id == user_id, UserBusiness.inn != record.inn)
+    await db.execute(update(Notification)
+                     .where(Notification.user_id == user_id, Notification.status == "pending",
+                            Notification.event_id.in_(select(RadarEvent.id).where(RadarEvent.inn.in_(others))))
+                     .values(status="cancelled"))
+    await db.execute(delete(UserBusiness).where(UserBusiness.user_id == user_id, UserBusiness.inn != record.inn))
 
     link = await db.get(UserBusiness, (user_id, record.inn)) or UserBusiness(user_id=user_id, inn=record.inn)
     link.connected_at = now

@@ -1,10 +1,20 @@
 """«Подготовить документ»: черновики .docx с реквизитами из реестра МСП и выписки ЕГРЮЛ.
 
-Суммы бот не знает, поэтому оставляет их пустыми полями. Код документа — Obligation.document.
+Суммы бот не знает, поэтому оставляет их пустыми полями. Код документа — Obligation.document:
+  notice        — уведомление об исчисленных суммах (КНД 1110355);
+  quota_order   — приказ о квотируемых рабочих местах;
+  enp_payment   — реквизиты платёжки на единый налоговый платёж (уплата ЕНП, УСН, взносы ИП);
+  report_brief  — памятка к отчёту: коды для титульного листа и что подготовить.
+
+Для отчётов бланк не рисуем намеренно: декларации и расчёты сдают в машиночитаемом формате
+через ЭДО или личный кабинет, а .docx «под бланк» сдать нельзя. Памятка экономит время на
+титульном листе и сборе данных, а сам отчёт формирует программа.
 """
 from __future__ import annotations
 
 import io
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import date
 
 from docx import Document
@@ -14,11 +24,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from databases.businesses_db import Business
 from notifications.models import BusinessProfile, RegistrySnapshot
 from radar.deadlines import region_name
-from radar.render import company_name, date_ru, fio
+from radar.render import as_date, company_name, date_ru, fio
 
 TITLES = {
     "notice": "Уведомление об исчисленных суммах",
     "quota_order": "Приказ о квотируемых рабочих местах",
+    "enp_payment": "Реквизиты платёжки на ЕНП",
+    "report_brief": "Памятка к отчёту",
+}
+
+HINTS = {
+    "notice": "Проверьте реквизиты, впишите суммы и отправьте.",
+    "quota_order": "Проверьте реквизиты, впишите число мест и подпишите.",
+    "enp_payment": "Перенесите реквизиты в платёжку в банке и впишите сумму.",
+    "report_brief": "Это не бланк: сам отчёт сформируйте в бухгалтерской программе или личном кабинете.",
 }
 
 KBK = {
@@ -104,14 +123,226 @@ def _quota_order(doc: Document, payload: dict, due: date, req: dict) -> None:
     doc.add_paragraph(f"{req['director_position']} ____________ {req['director_name'] or BLANK}")
 
 
+# ---------------------------------------------------------------- платёжка на ЕНП
+# Реквизиты одинаковы для всех регионов. Сверены 28.09.2026 (памятка ФНС о реквизитах платёжных
+# документов, klerk.ru 20.05.2026): с 01.04.2026 КПП получателя — 770701001, КПП плательщика — «0».
+# Если ФНС поменяет реквизиты, править только здесь.
+ENP_CHECKED = date(2026, 9, 28)
+ENP_RECIPIENT = (
+    ("13", "Банк получателя", "ОКЦ № 7 ГУ Банка России по ЦФО//УФК по Тульской области, г Тула"),
+    ("14", "БИК банка получателя", "017003983"),
+    ("15", "Счёт банка получателя", "40102810445370000059"),
+    ("16", "Получатель", "Казначейство России (ФНС России)"),
+    ("17", "Казначейский счёт", "03100643000000018500"),
+    ("61", "ИНН получателя", "7727406020"),
+    ("103", "КПП получателя", "770701001"),
+    ("104", "КБК", "18201061201010000510"),
+    ("105", "ОКТМО", "0"),
+)
+
+
+def _fields_table(doc: Document, rows: list[tuple[str, str, str]]) -> None:
+    table = doc.add_table(rows=1, cols=3)
+    table.style = "Table Grid"
+    for cell, text in zip(table.rows[0].cells, ("Поле", "Реквизит", "Значение")):
+        cell.text = text
+    for number, label, value in rows:
+        cells = table.add_row().cells
+        cells[0].text, cells[1].text, cells[2].text = number, label, value or BLANK
+
+
+def _enp_payment(doc: Document, payload: dict, due: date, req: dict) -> None:
+    doc.add_heading("Платёжное поручение на единый налоговый платёж", level=1)
+    doc.add_paragraph(f"{payload['title']} · {payload['period']}. Заплатить до {date_ru(due)}.")
+    doc.add_paragraph("Деньги поступят на единый налоговый счёт, а ФНС распределит их по налогам "
+                      "из уведомлений и деклараций. Поэтому КБК один для всех налогов, а основание "
+                      "платежа и налоговый период не указываются.")
+    payer = [
+        ("101", "Статус плательщика", "01"),
+        ("60", "ИНН плательщика", req["inn"]),
+        ("102", "КПП плательщика", "0"),
+        ("8", "Плательщик", req["name"]),
+        ("7", "Сумма", BLANK),
+        ("24", "Назначение платежа", "Единый налоговый платёж"),
+    ]
+    _fields_table(doc, payer + list(ENP_RECIPIENT))
+    doc.add_paragraph()
+    doc.add_paragraph("Сумма — из уведомлений и деклараций этого месяца. Если платите за ИП "
+                      "«за себя», сумма фиксированных взносов на год — на сайте ФНС.")
+    if req["kpp"]:
+        doc.add_paragraph(f"Если банк не принимает «0» в поле 102, укажите КПП организации ({req['kpp']}): "
+                          "приказ Минфина № 107н допускает оба значения.")
+    doc.add_paragraph(f"Реквизиты сверены {date_ru(ENP_CHECKED)}. Перед оплатой сверьтесь с "
+                      "сайтом ФНС: при смене реквизитов платёж может попасть в невыясненные.")
+
+
+# ---------------------------------------------------------------- памятки к отчётам
+PeriodFn = Callable[[date], tuple[str | None, int]]   # номинальный срок → (код периода, отчётный год)
+
+
+def _annual(n: date) -> tuple[str | None, int]:
+    return "34", n.year - 1
+
+
+def _cumulative(annual_month: int) -> PeriodFn:
+    """21 / 31 / 33 — первый квартал, полугодие, 9 месяцев; 34 — год (срок в annual_month)."""
+    def period(n: date) -> tuple[str | None, int]:
+        if n.month == annual_month:
+            return "34", n.year - 1
+        return {4: "21", 7: "31", 10: "33"}.get(n.month), n.year
+    return period
+
+
+def _vat(n: date) -> tuple[str | None, int]:
+    """НДС: 21–24 — I–IV квартал; срок в январе — за IV квартал прошлого года."""
+    if n.month == 1:
+        return "24", n.year - 1
+    return {4: "21", 7: "22", 10: "23"}.get(n.month), n.year
+
+
+def _year_only(n: date) -> tuple[str | None, int]:
+    return None, n.year - 1
+
+
+@dataclass(frozen=True)
+class Report:
+    form: str
+    knd: str | None                     # код формы по КНД (для форм СФР — нет)
+    period: PeriodFn | None             # None — период берём из подписи задачи
+    needs: tuple[str, ...]              # что подготовить до отчёта
+
+
+FNS_TOOL_LE = ("бухгалтерская программа, личный кабинет налогоплательщика или бесплатная "
+               "программа ФНС «Налогоплательщик ЮЛ»")
+FNS_TOOL_IP = "личный кабинет ИП на сайте ФНС или бухгалтерская программа"
+SFR_TOOL = "кабинет страхователя на сайте Социального фонда или бухгалтерская программа"
+
+# Коды форм и периодов сверены 28.09.2026 по порядкам заполнения ФНС.
+REPORTS: dict[str, Report] = {
+    "usn_decl": Report(
+        "Декларация по УСН", "1152017", _annual,
+        ("Книга учёта доходов и расходов (КУДиР) за год.",
+         "Суммы авансов за I квартал, полугодие и 9 месяцев.",
+         "Уплаченные страховые взносы — на УСН «доходы» они уменьшают налог.")),
+    "psfl": Report(
+        "Персонифицированные сведения о физических лицах", "1151162", None,
+        ("Список физлиц, получивших выплаты за месяц: ФИО, СНИЛС, ИНН.",
+         "Сумма выплат каждому, включая исполнителей по договорам ГПХ.")),
+    "rsv": Report(
+        "Расчёт по страховым взносам", "1151111", _cumulative(1),
+        ("Выплаты каждому работнику по месяцам периода.",
+         "Начисленные взносы и применённый тариф.",
+         "СНИЛС, ИНН и категории застрахованных лиц.")),
+    "ndfl6": Report(
+        "Расчёт 6-НДФЛ", "1151100", _cumulative(2),
+        ("Доходы работников и исполнителей нарастающим итогом с начала года.",
+         "Исчисленный, удержанный и перечисленный НДФЛ.",
+         "Даты выплат и удержания налога.")),
+    "efs1": Report(
+        "ЕФС-1 (Социальный фонд России)", None, None,
+        ("Начисленные и уплаченные взносы на травматизм за период.",
+         "В январе — периоды работы и стаж каждого сотрудника за прошлый год.")),
+    "buh": Report(
+        "Бухгалтерская (финансовая) отчётность", None, _year_only,
+        ("Остатки по счетам на 31 декабря.",
+         "Доходы и расходы за год.",
+         "Для малого бизнеса, как правило, достаточно упрощённых форм баланса и отчёта "
+         "о финансовых результатах.")),
+    "vat_decl": Report(
+        "Декларация по НДС", "1151001", _vat,
+        ("Книга продаж и книга покупок за квартал.",
+         "Счета-фактуры, по которым заявляете вычеты.",
+         "Восстановленный НДС, если был.")),
+    "profit_decl": Report(
+        "Декларация по налогу на прибыль", "1151006", _cumulative(3),
+        ("Доходы и расходы налогового учёта нарастающим итогом.",
+         "Авансовые платежи, начисленные за период.")),
+    "ip_3ndfl": Report(
+        "Декларация 3-НДФЛ", "1151020", _annual,
+        ("Доходы от предпринимательской деятельности за год.",
+         "Документы на профессиональные вычеты — или норматив 20% без документов.",
+         "Уплаченные авансовые платежи по НДФЛ.")),
+}
+
+
+def report_period(code: str, payload: dict, due: date) -> tuple[str | None, int | None]:
+    """Код периода и отчётный год по номинальному (до переноса с выходных) сроку задачи."""
+    report = REPORTS[code]
+    if report.period is None:
+        return None, None
+    nominal = as_date(payload.get("original")) or due
+    return report.period(nominal)
+
+
+def _report_brief(doc: Document, payload: dict, due: date, req: dict) -> None:
+    report = REPORTS[payload["code"]]
+    is_ip = len(req["inn"]) == 12
+    period_code, year = report_period(payload["code"], payload, due)
+    doc.add_heading(f"{report.form} — памятка к отчёту", level=1)
+    doc.add_paragraph(f"{payload['period']}. Сдать до {date_ru(due)}.")
+
+    rows = [("Организация" if not is_ip else "Индивидуальный предприниматель", req["name"]),
+            ("ИНН", req["inn"])]
+    if not is_ip:
+        rows.append(("КПП", req["kpp"]))
+    rows += [("ОГРНИП" if is_ip else "ОГРН", req["ogrn"])]
+    if report.knd:
+        rows.append(("Форма по КНД", report.knd))
+    if year:
+        rows.append(("Отчётный год", str(year)))
+    if period_code:
+        rows.append(("Код периода", period_code))
+    rows += [("Куда", payload["where"]), ("Формат", payload["format"])]
+    table = doc.add_table(rows=0, cols=2)
+    table.style = "Table Grid"
+    for label, value in rows:
+        cells = table.add_row().cells
+        cells[0].text, cells[1].text = label, value or BLANK
+
+    doc.add_heading("Что подготовить", level=2)
+    for item in report.needs:
+        doc.add_paragraph(item, style="List Bullet")
+    doc.add_heading("Порядок", level=2)
+    for step in payload["how"]:
+        if "Подготовить документ" not in step:
+            doc.add_paragraph(step, style="List Number")
+    doc.add_heading("Если не успеть", level=2)
+    doc.add_paragraph(payload["penalty"])
+    doc.add_paragraph(f"Основание: {payload['basis']}.")
+
+    tool = SFR_TOOL if payload["code"] == "efs1" else FNS_TOOL_IP if is_ip else FNS_TOOL_LE
+    doc.add_paragraph(f"Это памятка, а не бланк. Отчёт сформируйте по утверждённому формату: {tool}.")
+
+
+BUILDERS = {
+    "notice": _notice,
+    "quota_order": _quota_order,
+    "enp_payment": _enp_payment,
+    "report_brief": _report_brief,
+}
+
+
+CAPTIONS = {
+    "notice": "📄 {doc} — черновик к задаче «{title}» ({period}). ",
+    "quota_order": "📄 {doc} — черновик к задаче «{title}» ({period}). ",
+    "enp_payment": "📄 {doc} для задачи «{title}» ({period}). ",
+    "report_brief": "📄 {doc}: «{title}» ({period}). ",
+}
+
+
+def caption(payload: dict) -> str:
+    """Подпись к файлу в чате."""
+    code = payload["document"]
+    head = CAPTIONS[code].format(doc=TITLES[code], title=payload["title"], period=payload["period"])
+    return head + HINTS[code]
+
+
 def build(payload: dict, due: date, req: dict) -> tuple[str, bytes]:
     """Документ payload["document"] к сроку due: (имя файла, содержимое .docx)."""
     code = payload["document"]
     doc = Document()
-    if code == "notice":
-        _notice(doc, payload, due, req)
-    else:
-        _quota_order(doc, payload, due, req)
+    BUILDERS[code](doc, payload, due, req)
     buffer = io.BytesIO()
     doc.save(buffer)
-    return f"{code}_{req['inn']}_{due:%Y%m%d}.docx", buffer.getvalue()
+    prefix = code if code in ("notice", "quota_order") else payload["code"]
+    return f"{prefix}_{req['inn']}_{due:%Y%m%d}.docx", buffer.getvalue()

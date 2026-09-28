@@ -62,17 +62,9 @@ _TYPES = [
               Severity.WARNING, Delivery.IMMEDIATE, remind_before=(14, 3)),
     EventType("msp.flags_changed", "Изменились признаки в реестре МСП",
               Severity.INFO, Delivery.DIGEST),
-    # --- Лента: законы, проекты, меры поддержки (regulations.py) ---
-    EventType("law.upcoming", "Изменение законодательства, которое вас касается",
+    # --- Новые законы с pravo.gov.ru (radar/laws.py); срок — вступление в силу, если оно впереди ---
+    EventType("law.upcoming", "Вышел акт, который вас касается",
               Severity.WARNING, Delivery.IMMEDIATE, remind_before=(7, 0)),
-    EventType("law.possible", "Изменение, которое может вас касаться",
-              Severity.INFO, Delivery.DIGEST),
-    EventType("law.draft", "Проект изменений в вашей сфере",
-              Severity.INFO, Delivery.DIGEST),
-    EventType("law.general", "Изменение для всех организаций и ИП",
-              Severity.INFO, Delivery.DIGEST),
-    EventType("support.open", "Мера поддержки, подходящая вам",
-              Severity.INFO, Delivery.IMMEDIATE, remind_before=(7, 1)),
     EventType("profile.question", "Уточняющий вопрос", Severity.INFO, Delivery.IMMEDIATE),
     # --- Ежедневные проверки по внешним сервисам ---
     EventType("bank.blocked", "Операции по счёту приостановлены",

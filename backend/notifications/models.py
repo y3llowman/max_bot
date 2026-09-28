@@ -34,25 +34,21 @@ class BusinessProfile(Base):
     answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-class FeedItemRow(Base):
-    """Лента: законы / проекты / меры поддержки. Акты без сужающих признаков или без даты ждут модерации is_staff."""
-    __tablename__ = "feed_items"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    slug: Mapped[str] = mapped_column(String(80), unique=True)
-    kind: Mapped[str] = mapped_column(String(10))                  # law | draft | support
-    status: Mapped[str] = mapped_column(String(16), default="pending_review")  # → approved | rejected
-    title: Mapped[str] = mapped_column(String(300))
-    summary: Mapped[str] = mapped_column(Text)
-    actions: Mapped[list] = mapped_column(JSONB, default=list)
-    act: Mapped[str] = mapped_column(String(500))
-    audience: Mapped[dict] = mapped_column(JSONB)                   # сериализованный Audience
-    evidence: Mapped[list] = mapped_column(JSONB, default=list)     # цитаты из текста акта, найденные правилами
-    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
-    source_url: Mapped[str] = mapped_column(String(1000))
-    official_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-    eo_number: Mapped[str | None] = mapped_column(String(32), nullable=True, unique=True)  # pravo.gov.ru
-    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+class LawRecord(Base):
+    """Разобранные акты с pravo.gov.ru (radar/laws.py). Хранятся и нерелевантные (topics пустой) —
+    чтобы не разбирать их заново каждый день."""
+    __tablename__ = "laws"
+    eo_number: Mapped[str] = mapped_column(String(32), primary_key=True)   # номер опубликования на портале
+    header: Mapped[str] = mapped_column(String(500))                      # «Федеральный закон от … № …»
+    name: Mapped[str] = mapped_column(Text)
+    published: Mapped[date] = mapped_column(Date, index=True)
+    topics: Mapped[list] = mapped_column(JSONB, default=list)             # коды radar.laws.TOPICS; [] — не про бизнес
+    region: Mapped[str | None] = mapped_column(String(2), nullable=True)  # закон субъекта — код региона
+    amended: Mapped[list] = mapped_column(JSONB, default=list)            # названия изменяемых актов
+    effective: Mapped[list] = mapped_column(JSONB, default=list)          # даты вступления в силу, ISO
+    pages: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pdf_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class RadarEvent(Base):

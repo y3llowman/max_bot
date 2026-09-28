@@ -48,10 +48,14 @@ export function Connect() {
     } catch (e) {
       setBusy(false);
       haptic.error();
-      if (e instanceof ApiError && e.code === "not_found") {
+      const code = e instanceof ApiError ? e.code : "server";
+      if (code === "not_found") {
         setServerError("Не нашли компанию с таким ИНН в реестре ФНС — проверьте цифры");
       } else {
-        toast({ text: "Нет связи с ФНС — попробуйте ещё раз", icon: "alert-circle" });
+        const text = code === "unavailable" ? "Реестр ФНС не отвечает — попробуйте через пару минут"
+          : code === "network" ? "Нет соединения — проверьте интернет и попробуйте ещё раз"
+          : "Не получилось подключить компанию: ошибка на нашей стороне, попробуйте позже";
+        toast({ text, icon: "alert-circle" });
       }
     }
   };

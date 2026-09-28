@@ -7,16 +7,19 @@
   04:00 11-го числа    sync_msp          реестр МСП публикуется 10-го: исключение, смена категории
   04:30 ежедневно      check_inspections ЕРКНМ: проверки и профвизиты по ИНН, предостережения
   05:00 ежедневно      materialize       сроки обязанностей на год вперёд по профилю компании
+  07:00 ежедневно      ingest_laws       новые акты pravo.gov.ru → каким компаниям они касаются
   09:00 ежедневно      queue_reminders   напоминания по настройкам пользователя, после срока — каждый день
   каждую минуту        dispatch          outbox (notifications) → MAX
-Заглушки, не реализованы: weekly_digest, check_banks, ingest_laws, fan_out_feed, check_certs.
+Заглушки, не реализованы: weekly_digest, check_banks, check_certs.
 """
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import json
 import logging
+import re
 from collections import defaultdict
 from dataclasses import asdict
 from datetime import date, datetime, time, timedelta, timezone
@@ -31,22 +34,25 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.client import bot, bot_app, send_html
-from data_fetching import egrul_client, erknm_client, rmsp_client
+from data_fetching import egrul_client, erknm_client, pravo_client, rmsp_client
 from databases.businesses_db import Business, UserBusiness, current_business
 from databases.engine_start import SessionLocal
 from databases.users_db import User
 from radar import detectors as det
-from radar import documents
+from radar import documents, laws
 from radar.catalog import CATALOG, Delivery
 from radar.deadlines import Profile
 from radar.obligations import BY_CODE, OBLIGATIONS, due_dates
-from radar.render import SOURCE_URLS, build_context, company_ctx, keyboard, render
-from .models import BusinessProfile, Notification, RadarEvent, RegistrySnapshot
+from radar.render import SOURCE_URLS, build_context, company_ctx, flag_keyboard, keyboard, render
+from .models import BusinessProfile, LawRecord, Notification, RadarEvent, RegistrySnapshot
 from .planner import MSK, REMIND_HOUR, NotificationSettings, reminder_label
 
 logger = logging.getLogger(__name__)
 
 WINDOW_DAYS = 365  # сроки обязанностей — на год вперёд
+LAW_LOOKBACK_DAYS = 10  # текст законов и постановлений появляется на портале через 1–7 дней после публикации
+LAW_RECENT_DAYS = 30  # акты, которые досылаем после ответа «да» и по /demo_law; столько же загружаем при первом старте
+PDF_LIMIT = 20 * 1024 * 1024  # PDF больше — только ссылкой
 
 
 # ---- реестры ------------------------------------------------------------------
@@ -132,12 +138,38 @@ async def alert(events: list[RadarEvent]) -> None:
         await db.commit()
 
 
+async def reopen_conditions(inn: str, source: str, drafts: list[det.Draft], today: date) -> list[RadarEvent]:
+    """Состояние отметили «Сделано», а реестр его всё ещё показывает. Реестр обновляется не сразу,
+    поэтому ждём обычный интервал повтора (repeat_days) от последнего сообщения, потом снова открываем
+    и пишем (метка recheck:<день> — чтобы не совпасть с первым alert)."""
+    keys = [d.key for d in drafts if CATALOG[d.type].kind == "condition"]
+    if not keys:
+        return []
+    now = datetime.now(timezone.utc)
+    async with SessionLocal() as db:
+        done = await db.scalars(
+            select(RadarEvent)
+            .where(RadarEvent.inn == inn, RadarEvent.source == source, RadarEvent.kind == "condition",
+                   RadarEvent.key.in_(keys), RadarEvent.resolved_at.is_(None), RadarEvent.status == "done")
+        )
+        reopened = [e for e in done
+                    if (today - (e.last_notified_at or e.first_seen_at).astimezone(MSK).date()).days
+                    >= (CATALOG[e.type].repeat_days or 0)]
+        for event in reopened:
+            event.status = "open"
+            for user_id in await db.scalars(select(UserBusiness.user_id).where(UserBusiness.inn == inn)):
+                await _queue(db, user_id, event, f"recheck:{today:%y%m%d}", now)
+        await db.commit()
+    return reopened
+
+
 async def process_egrul(inn: str, today: date) -> None:
     cur = await fetch_egrul(inn)
     if cur is None:
         return
     prev = await save_snapshot(inn, "egrul", cur)
     drafts = det.egrul_conditions(inn, cur, today) + det.egrul_changes(inn, prev, cur, today)
+    await reopen_conditions(inn, "egrul", drafts, today)
     new_events = await upsert_events(inn, "egrul", drafts)   # только реально новые
     gone = det.reconcile_conditions(await open_condition_keys(inn, "egrul"), drafts)
     closed = await close_conditions(inn, gone)
@@ -149,10 +181,11 @@ async def process_msp(inn: str, cur: dict | None, today: date) -> list[RadarEven
     """Снимок реестра МСП → исключение, отсутствие в реестре, смена категории."""
     prev = await save_snapshot(inn, "msp", cur)
     drafts = det.msp_changes(inn, prev, cur, today)
+    reopened = await reopen_conditions(inn, "msp", drafts, today)
     new_events = await upsert_events(inn, "msp", drafts)
     await close_conditions(inn, det.reconcile_conditions(await open_condition_keys(inn, "msp"), drafts))
     await alert(new_events)
-    return new_events
+    return new_events + reopened
 
 
 async def process_inspections(inns: set[str], today: date) -> None:
@@ -180,6 +213,32 @@ async def check_inspections() -> None:
         await process_inspections(inns, date.today())
 
 
+_scanning: set[str] = set()              # ИНН, по которым сейчас идёт фоновая проверка
+_erknm_checked: dict[str, date] = {}     # ИНН → день, когда по нему уже качали ЕРКНМ
+
+
+async def scan_in_background(inn: str) -> None:
+    """ЕГРЮЛ и ЕРКНМ после подключения, «Обновить» и «Просканировать сейчас». По одному ИНН —
+    одна проверка за раз: повторное нажатие, пока идёт прошлая, ничего не запускает. ЕРКНМ
+    (4 архива, около двух минут) — не чаще раза в день: ночью её всё равно проверяет check_inspections."""
+    if inn in _scanning:
+        return
+    _scanning.add(inn)
+    today = date.today()
+    try:
+        try:
+            await process_egrul(inn, today)
+        except Exception:  # капча ЕГРЮЛ не должна отменять проверку ЕРКНМ
+            logger.exception("egrul scan failed for %s", inn)
+        if _erknm_checked.get(inn) != today:
+            await process_inspections({inn}, today)
+            _erknm_checked[inn] = today
+    except Exception:
+        logger.exception("erknm scan failed for %s", inn)
+    finally:
+        _scanning.discard(inn)
+
+
 async def active_inns() -> list[str]:
     async with SessionLocal() as db:
         rows = await db.scalars(
@@ -188,14 +247,26 @@ async def active_inns() -> list[str]:
         return list(rows)
 
 
+EGRUL_PAUSE = 60           # с, между выписками: капча появляется уже после 4–5 выписок подряд
+EGRUL_CAPTCHA_PAUSE = 900  # с, после капчи
+
+
 async def sync_egrul() -> None:
+    """Ночью по всем компаниям, растянуто: минута между выписками (сотня компаний — меньше двух часов),
+    после капчи — 15 минут и повтор той же компании один раз."""
     today = date.today()
     for inn in await active_inns():
-        try:
-            await process_egrul(inn, today)
-        except Exception:  # один сбой не должен ронять весь прогон
-            logger.exception("egrul sync failed for %s", inn)
-        await asyncio.sleep(2)  # бережём источник: ~30 запросов в минуту
+        for attempt in (1, 2):
+            try:
+                await process_egrul(inn, today)
+            except egrul_client.CaptchaRequiredError:
+                logger.warning("egrul captcha for %s, attempt %s", inn, attempt)
+                await asyncio.sleep(EGRUL_CAPTCHA_PAUSE)
+                continue
+            except Exception:  # один сбой не должен ронять весь прогон
+                logger.exception("egrul sync failed for %s", inn)
+            break
+        await asyncio.sleep(EGRUL_PAUSE)
 
 
 async def sync_msp() -> None:
@@ -232,6 +303,7 @@ async def load_profile(db: AsyncSession, inn: str) -> Profile | None:
         tax_regime=answers.tax_regime if answers else None,
         has_employees=headcount > 0 if headcount is not None else None,
         headcount=headcount, headcount_exact=answered is None and headcount is not None,
+        has_licenses=business.has_licenses, flags=dict(answers.flags or {}) if answers else {},
     )
 
 
@@ -294,6 +366,137 @@ async def materialize() -> None:
             logger.exception("materialize failed for %s", inn)
 
 
+# ---- новые законы (pravo.gov.ru, radar/laws.py) ---------------------------------
+async def classify_act(meta: dict) -> laws.Law | None:
+    """Акт с портала → Law. Сначала по названию; не про бизнес — дальше не смотрим. Иначе берём
+    текст из «Актуальных редакций» (дата вступления в силу, изменяемые акты), а если из названия
+    не понять, что меняется, — ещё и ищем изменяемый акт по номеру. None — ждём текст до завтра."""
+    law = laws.classify(meta, [], None)
+    if law is not None and not law.topics:
+        return law
+    resolved = []
+    if law is None:
+        for block, number, signed in laws.act_refs(laws.split_meta(meta)[1]):
+            found = await asyncio.to_thread(pravo_client.find_act, block, number, signed)
+            if found:
+                resolved.append(laws.split_meta(found)[1])
+    text = await asyncio.to_thread(pravo_client.text, meta["eoNumber"])
+    return laws.classify(meta, resolved, text) if text or resolved else law
+
+
+async def ingest_laws(today: date | None = None, days: int = LAW_LOOKBACK_DAYS, notify: bool = True) -> int:
+    """Акты за последние days дней → таблица laws → события компаниям, которых они касаются.
+    Уже разобранные пропускаем; «О внесении изменений…» без текста перепроверяем на следующий день.
+    Возвращает число новых актов про бизнес."""
+    today = today or date.today()
+    since = today - timedelta(days=days)
+    async with SessionLocal() as db:
+        known = set(await db.scalars(select(LawRecord.eo_number).where(LawRecord.published >= since)))
+    fresh: list[laws.Law] = []
+    for offset in range(days + 1):
+        day = since + timedelta(days=offset)
+        try:
+            metas = await asyncio.to_thread(pravo_client.published, day)
+        except Exception:  # портал не ответил — этот день перепроверим завтра
+            logger.exception("pravo.gov.ru list for %s failed", day)
+            continue
+        for meta in metas:
+            if meta["eoNumber"] in known:
+                continue
+            try:
+                law = await classify_act(meta)
+            except Exception:
+                logger.exception("pravo.gov.ru act %s failed", meta["eoNumber"])
+                continue
+            if law is None:
+                continue
+            known.add(law.eo_number)
+            async with SessionLocal() as db:
+                await db.execute(insert(LawRecord).values(
+                    eo_number=law.eo_number, header=law.header[:500], name=law.name, published=law.published,
+                    topics=law.topics, region=law.region, amended=law.amended,
+                    effective=[d.isoformat() for d in law.effective], pages=law.pages, pdf_size=law.pdf_size,
+                ).on_conflict_do_nothing())
+                await db.commit()
+            if law.topics:
+                fresh.append(law)
+    logger.info("pravo.gov.ru: %s new acts about business since %s", len(fresh), since)
+    if fresh and notify:
+        await fan_out_laws(await active_inns(), fresh, today)
+    return len(fresh)
+
+
+async def recent_laws(today: date) -> list[laws.Law]:
+    async with SessionLocal() as db:
+        rows = await db.scalars(select(LawRecord).where(
+            LawRecord.published >= today - timedelta(days=LAW_RECENT_DAYS), LawRecord.topics != []))
+        return [laws.Law(r.eo_number, r.header, r.name, r.published, r.topics, r.region, r.amended,
+                         [date.fromisoformat(d) for d in r.effective], r.pages, r.pdf_size) for r in rows]
+
+
+async def fan_out_laws(inns: list[str], items: list[laws.Law], today: date) -> list[RadarEvent]:
+    """Акты × компании → «вышел акт» или вопрос о признаке; новые — сразу в очередь (alert)."""
+    created = []
+    for inn in inns:
+        async with SessionLocal() as db:
+            profile = await load_profile(db, inn)
+        if profile is None:
+            continue
+        new = await upsert_events(inn, "pravo", [d for law in items for d in laws.drafts(law, profile, today)])
+        await alert(new)
+        created += new
+    return created
+
+
+async def start_laws() -> None:
+    """При старте бота. Пустая таблица — загрузить акты за LAW_RECENT_DAYS дней без рассылки
+    (иначе после первого деплоя всем пришёл бы месяц законов разом); иначе — догнать 07:00."""
+    async with SessionLocal() as db:
+        empty = (await db.execute(select(LawRecord.eo_number).limit(1))).first() is None
+    if empty:
+        await ingest_laws(days=LAW_RECENT_DAYS, notify=False)
+    else:
+        await ingest_laws()
+
+
+async def answer_flag(max_user_id: int, flag: str, yes: bool) -> str:
+    """Ответ на вопрос о признаке (касса, маркировка…): запоминаем его для компании и, если «да»,
+    присылаем акты за LAW_RECENT_DAYS дней, которые ждали этого ответа."""
+    async with SessionLocal() as db:
+        user = (await db.execute(select(User).where(User.max_user_id == max_user_id))).scalar_one_or_none()
+        business = await current_business(db, user.id) if user else None
+        if business is None or flag not in laws.FLAGS:
+            return "Сначала пришлите ИНН"
+        profile = await db.get(BusinessProfile, business.inn) or BusinessProfile(inn=business.inn, flags={}, bank_biks=[])
+        profile.flags = {**(profile.flags or {}), flag: yes}  # новый dict — иначе JSONB не сохранится
+        db.add(profile)
+        await db.execute(update(RadarEvent).where(RadarEvent.inn == business.inn, RadarEvent.key == f"q:{business.inn}:{flag}")
+                         .values(status="done"))
+        await db.commit()
+        inn = business.inn
+    if not yes:
+        return "Запомнили: такие акты присылать не будем"
+    today = date.today()
+    sent = await fan_out_laws([inn], await recent_laws(today), today)
+    await dispatch()
+    return "Запомнили — присылаем, что вышло" if sent else "Запомнили — пришлём, когда выйдет"
+
+
+@functools.lru_cache(maxsize=4)  # один акт обычно уходит нескольким пользователям подряд
+def _law_pdf(eo_number: str) -> bytes:
+    return pravo_client.pdf(eo_number)
+
+
+async def send_law_pdf(max_user_id: int, payload: dict) -> None:
+    """Официальный текст акта — файлом вслед за сообщением. Большой скан — только ссылкой «Источник»."""
+    if (payload.get("pdf_size") or 0) > PDF_LIMIT:
+        return
+    content = await asyncio.to_thread(_law_pdf, payload["eo"])
+    filename = re.sub(r"[^\w.\- ]+", "", payload["act"].replace("№", "N")).strip() + ".pdf"
+    await bot.send_message(user_id=max_user_id, text=f"📄 Официальный текст: {payload['act']}",
+                           attachments=[InputMediaBuffer(content, filename=filename)])
+
+
 # ---- напоминания ----------------------------------------------------------------
 def template_of(event: RadarEvent) -> str:
     return "deadline.group" if event.type == "deadline" else event.type
@@ -326,6 +529,19 @@ async def queue_reminders(now: datetime | None = None) -> None:
             label = reminder_label(event.due, today, NotificationSettings.of(user.notification_settings))
             if label:
                 await _queue(db, user.id, event, label, now)
+        # состояния без срока (исключение из МСП, ликвидация, дисквалификация) — раз в repeat_days, пока открыты
+        rows = await db.execute(
+            select(RadarEvent, User)
+            .join(UserBusiness, UserBusiness.inn == RadarEvent.inn)
+            .join(User, User.id == UserBusiness.user_id)
+            .where(RadarEvent.kind == "condition", RadarEvent.due.is_(None), RadarEvent.status == "open",
+                   RadarEvent.resolved_at.is_(None), User.is_active)
+        )
+        for event, user in rows.all():
+            every = CATALOG[event.type].repeat_days
+            last = (event.last_notified_at or event.first_seen_at).astimezone(MSK).date()
+            if every and (today - last).days >= every:
+                await _queue(db, user.id, event, f"repeat:{today:%y%m%d}", now)
         await db.commit()
 
 
@@ -376,7 +592,12 @@ async def _send(db: AsyncSession, items: list[tuple[Notification, User, RadarEve
     docs = ([SimpleNamespace(button="Подготовить документ", code=event.payload["document"])]
             if len(events) == 1 and event.payload.get("document") else None)
     try:
-        kb = keyboard([e.id for e in events], SOURCE_URLS.get(event.source), docs, app=await bot_app())
+        if event.type == "profile.question":
+            kb = flag_keyboard(event.payload["flag"])
+        else:
+            source = SOURCE_URLS.get(event.source) or event.payload.get("source_url")
+            # «Открыть» ведёт на экран задачи, а задачи в мини-приложении — только события со сроком
+            kb = keyboard([e.id for e in events], source, docs, app=await bot_app() if event.due else None)
         message_id = await send_html(user.max_user_id, render(first.template, ctx), kb)
     except Exception as exc:
         logger.exception("dispatch failed for user %s", user.id)
@@ -388,6 +609,12 @@ async def _send(db: AsyncSession, items: list[tuple[Notification, User, RadarEve
     for notification, _, e in items:
         notification.status, notification.sent_at, notification.max_message_id = "sent", now, message_id
         e.last_notified_at = now
+    # PDF — с первым сообщением об акте; в напоминаниях о вступлении в силу его уже не повторяем
+    if event.type == "law.upcoming" and (first.label == "alert" or first.label.startswith("demo")):
+        try:
+            await send_law_pdf(user.max_user_id, event.payload)
+        except Exception:
+            logger.exception("law pdf %s failed for user %s", event.payload.get("eo"), user.id)
 
 
 # ---- кнопки и документы (вызывает бот и API) -------------------------------------
@@ -418,7 +645,13 @@ async def apply_action(max_user_id: int, ids: list[int], action: str) -> str:
         else:
             for event in events:
                 event.status = "done" if action == "done" else "muted"
-            answer = "Отмечено как выполненное" if action == "done" else "Больше не напомним"
+            if action != "done":
+                answer = "Больше не напомним"
+            elif all(event.kind == "condition" for event in events):
+                # состояние закрывает только реестр: при следующей сверке проверим, что записи нет
+                answer = "Проверим по реестру: если запись останется, напомним"
+            else:
+                answer = "Отмечено как выполненное"
         await db.commit()
     return answer
 
@@ -426,11 +659,9 @@ async def apply_action(max_user_id: int, ids: list[int], action: str) -> str:
 async def send_document(db: AsyncSession, event: RadarEvent, max_user_id: int) -> None:
     """Черновик документа к сроку — файлом в чат с ботом."""
     filename, content = documents.build(event.payload, event.due, await documents.requisites(db, event.inn))
-    title = documents.TITLES[event.payload["document"]]
     await bot.send_message(
         user_id=max_user_id,
-        text=f"📄 {title} — черновик к задаче «{event.payload['title']}» ({event.payload['period']}). "
-             "Проверьте реквизиты, впишите суммы и отправьте.",
+        text=documents.caption(event.payload),
         attachments=[InputMediaBuffer(content, filename=filename)],
     )
 
@@ -491,16 +722,35 @@ async def demo_event(max_user_id: int, kind: str) -> str:
     else:
         return "Доступно: /demo_event knm, /demo_event msp_excluded"
     if not new:
-        return "Такое событие уже открыто — сначала закройте его кнопкой под сообщением."
+        return ("Такое событие уже открыто. Оно закроется само, когда реестр перестанет его показывать: "
+                "«Просканировать сейчас» в мини-приложении. «Сделано» не закрывает его, а откладывает до сверки.")
     await dispatch()
     return "Готово: событие создано, сообщение отправлено."
+
+
+async def demo_law(max_user_id: int) -> str:
+    """Акты за LAW_RECENT_DAYS дней, которые касаются текущей компании, — сразу в чат. Настоящие
+    данные портала, не имитация; уже присланный акт второй раз не придёт (ключ law:<номер>:<ИНН>)."""
+    async with SessionLocal() as db:
+        user = (await db.execute(select(User).where(User.max_user_id == max_user_id))).scalar_one_or_none()
+        business = await current_business(db, user.id) if user else None
+    if business is None:
+        return "Сначала подключите компанию: пришлите ИНН."
+    today = date.today()
+    items = await recent_laws(today)
+    if not items:
+        return "Акты с pravo.gov.ru ещё загружаются после запуска бота — попробуйте через несколько минут."
+    new = await fan_out_laws([business.inn], items, today)
+    if not new:
+        return (f"За {LAW_RECENT_DAYS} дней на pravo.gov.ru {len(items)} актов про бизнес, "
+                "новых для вашей компании среди них нет: не касаются или уже присланы.")
+    await dispatch()
+    return f"Готово: отправили {len(new)} (акты и вопросы) из {len(items)} актов про бизнес за {LAW_RECENT_DAYS} дней."
 
 
 # ---- заглушки -------------------------------------------------------------------
 async def weekly_digest() -> None: ...
 async def check_banks() -> None: ...        # det.bank_conditions
-async def ingest_laws() -> None: ...        # law_ingest.run_daily
-async def fan_out_feed(feed_id: int) -> None: ...  # вызывается из callback feed:<id>:approve
 async def check_certs() -> None: ...        # det.cert_events
 
 
