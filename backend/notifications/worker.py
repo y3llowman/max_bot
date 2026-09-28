@@ -40,10 +40,10 @@ from databases.engine_start import SessionLocal
 from databases.users_db import User
 from radar import detectors as det
 from radar import documents, laws
-from radar.catalog import CATALOG, Delivery
+from radar.catalog import CATALOG, Delivery, Severity
 from radar.deadlines import Profile
 from radar.obligations import BY_CODE, OBLIGATIONS, due_dates
-from radar.render import SOURCE_URLS, build_context, company_ctx, flag_keyboard, keyboard, render
+from radar.render import SOURCE_URLS, build_context, company_ctx, flag_keyboard, keyboard, plural, render
 from .models import BusinessProfile, LawRecord, Notification, RadarEvent, RegistrySnapshot
 from .planner import MSK, REMIND_HOUR, NotificationSettings, reminder_label
 
@@ -545,11 +545,15 @@ async def queue_reminders(now: datetime | None = None) -> None:
         await db.commit()
 
 
-_dispatching = asyncio.Lock()  # dispatch зовут планировщик и демо-команды — не отправлять дважды
+AWAIT_HOURS = 24  # сутки без ответа — присылаем следующее: иначе важное навсегда застрянет за неотвеченным
+
+_dispatching = asyncio.Lock()  # dispatch зовут планировщик, кнопки и демо-команды — не отправлять дважды
 
 
 async def dispatch() -> None:
-    """Outbox → MAX. Сроки одной компании на одну дату — одним сообщением (шаблон deadline.group)."""
+    """Outbox → MAX, по одному сообщению на пользователя: следующее — после ответа на предыдущее
+    (кнопка под ним, см. answered) или через AWAIT_HOURS. Сроки одной компании на одну дату — одним
+    сообщением (шаблон deadline.group); из нескольких напоминаний об одной задаче — только новое."""
     async with _dispatching:
         await _dispatch(datetime.now(timezone.utc))
 
@@ -559,46 +563,48 @@ async def _dispatch(now: datetime) -> None:
         rows = (await db.execute(
             select(Notification, User, RadarEvent)
             .join(User, User.id == Notification.user_id)
-            .join(RadarEvent, RadarEvent.id == Notification.event_id)
+            .outerjoin(RadarEvent, RadarEvent.id == Notification.event_id)
             .where(Notification.status == "pending", Notification.scheduled_at <= now)
-            .order_by(RadarEvent.due, Notification.id)
+            .order_by(Notification.id)
         )).all()
-        groups: dict[tuple, list] = defaultdict(list)
+        newest = {(n.user_id, e.id): n.id for n, _, e in rows if e is not None}
+        queues: dict[int, dict[tuple, list]] = defaultdict(dict)  # пользователь → группы по порядку
         for notification, user, event in rows:
             settings = NotificationSettings.of(user.notification_settings)
-            if event.status != "open" or not settings.chat:
-                notification.status = "cancelled"
+            stale = event is not None and (event.status != "open" or newest[(user.id, event.id)] != notification.id)
+            if stale or not settings.chat:
+                notification.status = "cancelled"  # задача закрыта, есть напоминание новее или чат выключен
             elif notification.label.startswith("demo") or not settings.is_quiet(now):
-                key = ((user.id, event.inn, event.due) if notification.template == "deadline.group"
-                       else (user.id, notification.id))
-                groups[key].append((notification, user, event))
+                key = ((event.inn, event.due) if notification.template == "deadline.group"
+                       else (notification.id,))
+                queues[user.id].setdefault(key, []).append((notification, user, event))
         await db.commit()
-        for items in groups.values():
-            await _send(db, items, now)
+        for groups in queues.values():
+            user = next(iter(groups.values()))[0][1]
+            if user.awaiting_mid and user.awaiting_since and now - user.awaiting_since < timedelta(hours=AWAIT_HOURS):
+                continue  # ждём ответа на прошлое сообщение
+            # сначала критичное (🔴), дальше — по очереди
+            ordered = sorted(groups.values(), key=lambda items: (not _critical(items[0][2]), items[0][0].id))
+            await _send(db, ordered[0], now, waiting=len(ordered) - 1)
             await db.commit()
 
 
-async def _send(db: AsyncSession, items: list[tuple[Notification, User, RadarEvent]], now: datetime) -> None:
+def _critical(event: RadarEvent | None) -> bool:
+    return event is not None and event.type in CATALOG and CATALOG[event.type].severity == Severity.CRITICAL
+
+
+async def _send(db: AsyncSession, items: list[tuple[Notification, User, RadarEvent | None]], now: datetime,
+                waiting: int = 0) -> None:
     first, user, event = items[0]
-    events = list({e.id: e for _, _, e in items}.values())
-    today = now.astimezone(MSK).date()
-    business = await db.get(Business, event.inn)
-    company = company_ctx(None, {"name": business.name, "ogrn": business.ogrn}, event.inn)
-    if first.template == "deadline.group":
-        payloads = [{"shifted": False, "period": "", "basis": "", "why": "", **e.payload} for e in events]
-        ctx = build_context("deadline", {}, company, today, items=payloads, due=event.due)
-    else:
-        ctx = build_context(event.type, event.payload, company, today, src=event.source)
-    docs = ([SimpleNamespace(button="Подготовить документ", code=event.payload["document"])]
-            if len(events) == 1 and event.payload.get("document") else None)
     try:
-        if event.type == "profile.question":
-            kb = flag_keyboard(event.payload["flag"])
+        if event is None:  # готовый текст: карточка тура /demo
+            text, kb = first.text, first.keyboard
         else:
-            source = SOURCE_URLS.get(event.source) or event.payload.get("source_url")
-            # «Открыть» ведёт на экран задачи, а задачи в мини-приложении — только события со сроком
-            kb = keyboard([e.id for e in events], source, docs, app=await bot_app() if event.due else None)
-        message_id = await send_html(user.max_user_id, render(first.template, ctx), kb)
+            text, kb = await _render(db, items, now)
+        if waiting:
+            text += (f"\n\n<i>Ещё {waiting} {plural(waiting, 'сообщение', 'сообщения', 'сообщений')} — пришлю "
+                     "по одному, когда ответите на это.</i>")
+        message_id = await send_html(user.max_user_id, text, kb)
     except Exception as exc:
         logger.exception("dispatch failed for user %s", user.id)
         for notification, _, _ in items:
@@ -608,13 +614,70 @@ async def _send(db: AsyncSession, items: list[tuple[Notification, User, RadarEve
         return
     for notification, _, e in items:
         notification.status, notification.sent_at, notification.max_message_id = "sent", now, message_id
-        e.last_notified_at = now
+        if e is not None:
+            e.last_notified_at = now
+    user.awaiting_mid, user.awaiting_since = message_id, now
     # PDF — с первым сообщением об акте; в напоминаниях о вступлении в силу его уже не повторяем
-    if event.type == "law.upcoming" and (first.label == "alert" or first.label.startswith("demo")):
+    if event is not None and event.type == "law.upcoming" and (first.label == "alert" or first.label.startswith("demo")):
         try:
             await send_law_pdf(user.max_user_id, event.payload)
         except Exception:
             logger.exception("law pdf %s failed for user %s", event.payload.get("eo"), user.id)
+
+
+async def _render(db: AsyncSession, items: list[tuple[Notification, User, RadarEvent]],
+                  now: datetime) -> tuple[str, dict]:
+    first, _, event = items[0]
+    events = list({e.id: e for _, _, e in items}.values())
+    today = now.astimezone(MSK).date()
+    business = await db.get(Business, event.inn)
+    company = company_ctx(None, {"name": business.name, "ogrn": business.ogrn}, event.inn)
+    if first.template == "deadline.group":
+        payloads = [{"shifted": False, "period": "", "basis": "", "why": "", **e.payload} for e in events]
+        ctx = build_context("deadline", {}, company, today, items=payloads, due=event.due)
+    else:
+        ctx = build_context(event.type, event.payload, company, today, src=event.source)
+    if event.type == "profile.question":
+        return render(first.template, ctx), flag_keyboard(event.payload["flag"])
+    docs = ([SimpleNamespace(button="Подготовить документ", code=event.payload["document"])]
+            if len(events) == 1 and event.payload.get("document") else None)
+    source = SOURCE_URLS.get(event.source) or event.payload.get("source_url")
+    # «Открыть» ведёт на экран задачи, а задачи в мини-приложении — только события со сроком
+    kb = keyboard([e.id for e in events], source, docs, app=await bot_app() if event.due else None)
+    return render(first.template, ctx), kb
+
+
+async def queue_text(user_id: int, text: str, kb: dict, label: str) -> None:
+    """Сообщение без события — в общую очередь, за уже стоящими (карточка шага /demo идёт после его сообщений)."""
+    async with SessionLocal() as db:
+        db.add(Notification(user_id=user_id, template="text", label=label, text=text, keyboard=kb,
+                            dedup_key=f"text:{user_id}:{label}", scheduled_at=datetime.now(timezone.utc)))
+        await db.commit()
+    await dispatch()
+
+
+async def hold(max_user_id: int, message_id: str | None) -> None:
+    """Бот сам (не из очереди) задал вопрос с кнопками — очередь ждёт ответа на него."""
+    async with SessionLocal() as db:
+        await db.execute(update(User).where(User.max_user_id == max_user_id)
+                         .values(awaiting_mid=message_id, awaiting_since=datetime.now(timezone.utc)))
+        await db.commit()
+
+
+async def answered(max_user_id: int, message_id: str | None, release: bool = True) -> None:
+    """Нажата кнопка под сообщением: убрать его из чата и, если его ждала очередь, прислать следующее.
+    release=False — бот сразу задаст следующий вопрос сам (онбординг, шаг /demo)."""
+    if message_id:
+        try:
+            await bot.delete_message(message_id)
+        except Exception:  # удалить не вышло (старое или уже удалено) — очередь всё равно освобождаем
+            logger.warning("could not delete message %s", message_id, exc_info=True)
+        async with SessionLocal() as db:
+            await db.execute(update(User).where(User.max_user_id == max_user_id, User.awaiting_mid == message_id)
+                             .values(awaiting_mid=None, awaiting_since=None))
+            await db.commit()
+    if release:
+        await dispatch()
 
 
 # ---- кнопки и документы (вызывает бот и API) -------------------------------------

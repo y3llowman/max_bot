@@ -27,3 +27,6 @@ class User(Base):
     notification_settings: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # когда пользователь последний раз открыл экран «Уведомления» — точка на колокольчике гаснет
     notifications_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # сообщение бота, которое ждёт ответа (кнопки): пока оно висит, новые из очереди не приходят (worker.dispatch)
+    awaiting_mid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    awaiting_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

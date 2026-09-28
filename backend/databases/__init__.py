@@ -14,6 +14,10 @@ NEW_COLUMNS = (
     "ALTER TABLE businesses ADD COLUMN IF NOT EXISTS employees_num INTEGER",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS notifications_seen_at TIMESTAMPTZ",
     "ALTER TABLE businesses ALTER COLUMN employees_num DROP NOT NULL",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS awaiting_mid VARCHAR(64)",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS awaiting_since TIMESTAMPTZ",
+    "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS text TEXT",
+    "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS keyboard JSONB",
 )
 
 

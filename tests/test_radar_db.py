@@ -63,14 +63,20 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
             await db.flush()
             await save_business(db, user.id, RECORD)
         self.send = AsyncMock(return_value="mid-1")
+        self.deleted = AsyncMock()
         patches = [patch.object(worker, "send_html", self.send),
-                   patch.object(worker, "bot_app", AsyncMock(return_value=BOT_APP))]
+                   patch.object(worker, "bot_app", AsyncMock(return_value=BOT_APP)),
+                   patch.object(worker.bot, "delete_message", self.deleted)]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
 
     async def asyncTearDown(self):
         await engine.dispose()  # у каждого теста свой event loop — соединения не переиспользуем
+
+    async def reply(self):
+        """Пользователь нажал кнопку под последним сообщением: оно удаляется, очередь присылает следующее."""
+        await worker.answered(MAX_USER, "mid-1")
 
     async def answer(self, regime: str | None, headcount: int | None):
         async with SessionLocal() as db:
@@ -148,6 +154,31 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         self.send.assert_not_awaited()
         self.assertTrue(all(n.status == "cancelled" for n in await self.notifications() if n.label.startswith("snooze")))
 
+    async def test_queue_sends_one_message_until_answered(self):
+        await self.answer("usn_income", 36)
+        deadlines = await self.events(type="deadline")
+        a = deadlines[0]
+        b = next(e for e in deadlines if e.due != a.due)
+        async with SessionLocal() as db:
+            user = (await db.execute(select(User))).scalar_one()
+            for label in ("T-7", "T-1"):  # два напоминания об одной задаче — придёт только новое
+                await worker._queue(db, user.id, a, label, MORNING)
+            await worker._queue(db, user.id, b, "T-1", MORNING)
+            await db.commit()
+        await worker.dispatch()
+        self.send.assert_awaited_once()
+        self.assertIn("Ещё 1 сообщение", self.send.await_args.args[1])
+        self.assertEqual({n.label: n.status for n in await self.notifications() if n.event_id == a.id},
+                         {"T-7": "cancelled", "T-1": "sent"})
+        await worker.dispatch()
+        self.send.assert_awaited_once()  # пока не ответили — молчим
+        async with SessionLocal() as db:  # сутки без ответа — следующее всё равно придёт
+            user = (await db.execute(select(User))).scalar_one()
+            user.awaiting_since -= timedelta(hours=25)
+            await db.commit()
+        await worker.dispatch()
+        self.assertEqual(self.send.await_count, 2)
+
     async def test_overdue_is_reminded_every_day_until_closed(self):
         await self.answer(None, None)
         buh = (await self.events())[0]
@@ -196,7 +227,7 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
             await db.commit()
         await worker.queue_reminders(MORNING)
         self.assertIn("repeat:260926", [n.label for n in await self.notifications()])
-        await worker.dispatch()
+        await self.reply()  # ответили на первое сообщение — пришёл повтор
 
         self.assertEqual(await worker.apply_action(MAX_USER, [event.id], "done"),
                          "Проверим по реестру: если запись останется, напомним")
@@ -256,6 +287,9 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
             await worker.process_egrul(INN, TODAY)
         self.assertIsNotNone((await self.events(type="egrul.unreliable"))[0].resolved_at)
         await worker.dispatch()
+        self.send.assert_awaited_once()  # пока не ответили на прошлое — новое ждёт
+        await self.reply()
+        self.deleted.assert_awaited_once_with("mid-1")  # отвеченное убрано из чата
         self.assertIn("Отметка о недостоверности снята", self.send.await_args.args[1])
 
     async def test_inspections_from_erknm(self):
@@ -327,6 +361,9 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(question.payload["flag"], "cash_register")
 
             await worker.dispatch()
+            self.send.assert_awaited_once()  # по одному: вопрос придёт после ответа на акт
+            self.assertIn("Ещё 1 сообщение — пришлю по одному", self.send.await_args.args[1])
+            await self.reply()
             texts_sent = {call.args[1].split("\n")[0]: call.args for call in self.send.await_args_list}
             self.assertEqual(len(texts_sent), 2)
             _, text, kb = next(args for title, args in texts_sent.items() if "Вышел акт" in title)
@@ -344,6 +381,7 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((media.buffer, media.filename), (pdf, "Приказ Федеральной налоговой службы от 20.08.2026 N ЕД-7-3555.pdf"))
 
             self.assertEqual(await worker.answer_flag(MAX_USER, "cash_register", True), "Запомнили — присылаем, что вышло")
+            await self.reply()  # бот убирает отвеченный вопрос — и приходит акт о кассах
             [kkt] = [e for e in await self.events(type="law.upcoming") if e.payload["eo"] == "0001202609250002"]
             self.assertEqual(kkt.due, date(2027, 3, 1))  # дата вступления в силу — из текста
             self.assertEqual((await self.events(type="profile.question"))[0].status, "done")
@@ -399,19 +437,27 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
                 patch.object(worker.bot, "send_message", AsyncMock()) as files, \
                 patch.object(worker.pravo_client, "pdf", lambda eo: b"%PDF-1.4"):
             worker._law_pdf.cache_clear()
-            await tour.intro(MAX_USER)
+            await worker.hold(MAX_USER, await tour.intro(MAX_USER))
             self.assertIn(f"Демо всех функций: {len(tour.STEPS)} шагов", cards[0][0])
+            waited = False
             for n in range(1, len(tour.STEPS) + 1):
+                await worker.answered(MAX_USER, "mid-1", release=False)  # «Начать» / «Дальше» — как в боте
                 sent_before = self.send.await_count
                 await tour.run(MAX_USER, str(n), shown)
-                text, kb = cards[-1]
+                for _ in range(10):  # отвечаем на сообщения шага, пока не придёт его карточка
+                    text, kb = self.send.await_args.args[1:]
+                    if f"Шаг {n} из {len(tour.STEPS)}" in text:
+                        break
+                    waited |= "пришлю по одному" in text
+                    await self.reply()
                 self.assertIn(f"Шаг {n} из {len(tour.STEPS)}", text)
                 self.assertNotIn("⚠️", text, f"шаг {n}: {text}")
                 if tour.STEPS[n - 1].run not in (None, tour.profile):
-                    self.assertGreater(self.send.await_count, sent_before, f"шаг {n} ничего не прислал")
+                    self.assertGreater(self.send.await_count, sent_before + 1, f"шаг {n} ничего не прислал")
+            self.assertTrue(waited, "у шагов с несколькими сообщениями есть «Ещё N — пришлю по одному»")
             shown.assert_awaited_once()
             self.assertEqual(kb["payload"]["buttons"][-1][0]["payload"], "demo:clean")
-            self.assertGreaterEqual(files.await_count, 3, "документы трёх видов и PDF закона")
+            self.assertEqual(files.await_count, 1, "PDF закона; документы — по кнопке, не пачкой")
 
             texts = "\n".join(call.args[1] for call in self.send.await_args_list)
             for expected in ("Запланирована проверка", "Запланирован профилактический визит", "предостережение",
@@ -498,7 +544,7 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
     # ---- онбординг в боте
     async def test_bot_asks_profile_questions_then_shows_obligations(self):
         from bot import message_handler as bot_flow
-        say = AsyncMock()
+        say = AsyncMock(return_value="mid-q")
         with patch.object(bot_flow, "say", say), patch.object(bot_flow, "bot_app", AsyncMock(return_value=BOT_APP)):
             await bot_flow.next_step(MAX_USER)
             self.assertIn("режим налогообложения", say.await_args.args[1])
@@ -521,7 +567,7 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         async with SessionLocal() as db:
             (await db.get(Business, INN)).employees_num = 12  # среднесписочная из реестра МСП
             await db.commit()
-        say = AsyncMock()
+        say = AsyncMock(return_value="mid-q")
         with patch.object(bot_flow, "say", say), patch.object(bot_flow, "bot_app", AsyncMock(return_value=BOT_APP)):
             await self.answer("usn_income", None)
             await bot_flow.next_step(MAX_USER)

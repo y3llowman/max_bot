@@ -77,7 +77,8 @@ class RadarEvent(Base):
 
 
 class Notification(Base):
-    """Outbox: планировщик кладёт сюда, диспетчер отправляет. dedup_key = f'{event_id}:{label}'."""
+    """Outbox: планировщик кладёт сюда, диспетчер отправляет по одному на пользователя. dedup_key =
+    f'{event_id}:{user_id}:{label}'. Без события — готовый текст и клавиатура (карточки тура /demo)."""
     __tablename__ = "notifications"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
@@ -91,3 +92,5 @@ class Notification(Base):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     max_message_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)          # для сообщений без события
+    keyboard: Mapped[dict | None] = mapped_column(JSONB, nullable=True)   # формат radar.render.keyboard

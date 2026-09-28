@@ -92,9 +92,21 @@ def question_keyboard(question: str, legal_entity: bool):
     ]).pack()
 
 
-async def say(max_user_id: int, text: str, *attachments) -> None:
-    await bot.send_message(user_id=max_user_id, text=text, format=ParseMode.HTML,
-                           attachments=list(attachments) or None)
+async def say(max_user_id: int, text: str, *attachments) -> str | None:
+    """Сообщение в чат; возвращает его id (для вопроса — чтобы удалить после ответа)."""
+    sent = await bot.send_message(user_id=max_user_id, text=text, format=ParseMode.HTML,
+                                  attachments=list(attachments) or None)
+    return sent.message.body.mid if sent else None
+
+
+async def ask(max_user_id: int, question: str, legal_entity: bool) -> None:
+    """Вопрос профиля кнопками. Пока на него не ответили, очередь радара молчит (worker.hold)."""
+    await worker.hold(max_user_id, await say(max_user_id, QUESTIONS[question][0], question_keyboard(question, legal_entity)))
+
+
+def message_id(event: MessageCallback) -> str | None:
+    """Сообщение, под которым нажали кнопку."""
+    return event.message.body.mid if event.message else None
 
 
 async def find_user(db, max_user_id: int) -> User | None:
@@ -116,7 +128,7 @@ async def obligations_summary(inn: str) -> str:
     lines += [f"• {title}" for title in titles]
     if events:
         lines += ["", "<b>Ближайшие сроки</b>"]
-        lines += [f"• {date_short(e.due)} — {e.payload['title']} ({e.payload['period'].lower()})" for e in events[:5]]
+        lines += [f"• {date_short(e.due)} — {e.payload['title']} ({e.payload['period'][:1].lower()}{e.payload['period'][1:]})" for e in events[:5]]
     benefits = profile.headcount_benefits()
     if benefits:
         lines += ["", "<b>Доступно при вашей численности</b>"]
@@ -126,8 +138,9 @@ async def obligations_summary(inn: str) -> str:
     return "\n".join(lines)
 
 
-async def next_step(max_user_id: int) -> None:
-    """После ИНН и после каждого ответа: следующий вопрос профиля или итог — список обязанностей."""
+async def next_step(max_user_id: int) -> bool:
+    """После ИНН и после каждого ответа: следующий вопрос профиля или итог — список обязанностей.
+    True — задан вопрос (очередь радара ждёт ответа на него)."""
     async with SessionLocal() as db:
         user = await find_user(db, max_user_id)
         business = await current_business(db, user.id) if user else None
@@ -135,11 +148,14 @@ async def next_step(max_user_id: int) -> None:
     if business is None:
         await say(max_user_id, ASK_INN)
     elif profile.tax_regime is None:
-        await say(max_user_id, QUESTIONS["regime"][0], question_keyboard("regime", profile.is_legal_entity))
+        await ask(max_user_id, "regime", profile.is_legal_entity)
+        return True
     elif profile.headcount is None:
-        await say(max_user_id, QUESTIONS["staff"][0], question_keyboard("staff", profile.is_legal_entity))
+        await ask(max_user_id, "staff", profile.is_legal_entity)
+        return True
     else:
         await say(max_user_id, await obligations_summary(business.inn), app_keyboard(await bot_app()))
+    return False
 
 
 async def _save_business(max_user_id: int, sender, record: rmsp_client.RmspRecord) -> Business:
@@ -242,12 +258,14 @@ if DEBUG:
     # полный демо-сценарий по шагам (notifications/demo.py)
     @dp.message_created(Command("demo"))
     async def on_demo(event: MessageCreated):
-        await demo_tour.intro(event.message.sender.user_id)
+        max_user_id = event.message.sender.user_id
+        await worker.hold(max_user_id, await demo_tour.intro(max_user_id))
 
     @dp.message_callback(F.callback.payload.startswith("demo:"))
     async def on_demo_step(event: MessageCallback):
         await event.answer()
         max_user_id = event.callback.user.user_id
+        await worker.answered(max_user_id, message_id(event), release=False)  # карточка шага отработала
         await demo_tour.run(max_user_id, event.callback.payload.removeprefix("demo:"), lambda: show_profile(max_user_id))
 
 @dp.message_created(states=OrderState.waiting_for_inn)
@@ -305,8 +323,7 @@ async def on_ask(event: MessageCallback):
     async with SessionLocal() as db:
         user = await find_user(db, event.callback.user.user_id)
         business = await current_business(db, user.id) if user else None
-    await say(event.callback.user.user_id, QUESTIONS[question][0],
-              question_keyboard(question, business is not None and business.subject_type == "UL"))
+    await ask(event.callback.user.user_id, question, business is not None and business.subject_type == "UL")
 
 @dp.message_callback(F.callback.payload.startswith("q:"))
 async def on_answer(event: MessageCallback):
@@ -335,8 +352,11 @@ async def on_answer(event: MessageCallback):
         inn = business.inn
     added, removed = await worker.materialize_for(inn)
     await event.answer(notification=f"Сохранили: {label}")
+    # вопрос отвечен — убираем его; очередь радара отпускаем, только если следующего вопроса нет
+    await worker.answered(max_user_id, message_id(event), release=False)
     if not was_complete:
-        await next_step(max_user_id)
+        if not await next_step(max_user_id):
+            await worker.dispatch()
         return
     # профиль уже был заполнен — сообщаем, как изменился список обязанностей
     lines = ["Профиль обновлён."]
@@ -347,6 +367,7 @@ async def on_answer(event: MessageCallback):
     if not added and not removed:
         lines.append("Список обязанностей не изменился.")
     await say(max_user_id, "\n".join(lines), app_keyboard(await bot_app()))
+    await worker.dispatch()
 
 
 @dp.message_callback(F.callback.payload.startswith("flag:"))
@@ -354,6 +375,7 @@ async def on_flag(event: MessageCallback):
     """Вопрос о признаке компании перед рассылкой акта: flag:<признак>:yes|no (radar.render.flag_keyboard)."""
     _, flag, value = event.callback.payload.split(":")
     await event.answer(notification=await worker.answer_flag(event.callback.user.user_id, flag, value == "yes"))
+    await worker.answered(event.callback.user.user_id, message_id(event))
 
 
 @dp.message_callback(F.callback.payload.startswith("ev:"))
@@ -362,6 +384,7 @@ async def on_event_action(event: MessageCallback):
     _, ids, action = event.callback.payload.split(":")
     answer = await worker.apply_action(event.callback.user.user_id, [int(i) for i in ids.split(",")], action)
     await event.answer(notification=answer)
+    await worker.answered(event.callback.user.user_id, message_id(event))  # ответили — убрать и прислать следующее
 
 
 @dp.message_callback(F.callback.payload.startswith("doc:"))
