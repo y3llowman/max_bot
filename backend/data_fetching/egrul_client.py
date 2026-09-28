@@ -54,6 +54,7 @@ HEADERS = {
 POLL_INTERVAL_SECONDS = 1.0
 POLL_TIMEOUT_SECONDS = 30.0
 
+STATE_SECTION = "Сведения о состоянии"  # prefix of "Сведения о состоянии юридического лица"
 DISQUALIFICATION_SECTION = (
     "Сведения о дисквалификации лица, имеющего право без доверенности "
     "действовать от имени юридического лица"
@@ -195,6 +196,14 @@ class OkvedCode:
 
 
 @dataclass
+class Note:
+    """A "Дополнительные сведения" row, e.g. "сведения недостоверны (...)"."""
+    section: str  # the section it belongs to: address, director, founders...
+    text: str
+    date: str | None = None  # date of the ЕГРЮЛ entry (from the ГРН row right below)
+
+
+@dataclass
 class EgrulExtract:
     full_name: str | None = None
     short_name: str | None = None
@@ -221,7 +230,11 @@ class EgrulExtract:
     founders: list[Person] = field(default_factory=list)
     okved_main: OkvedCode | None = None
     okved_additional: list[OkvedCode] = field(default_factory=list)
-    notes: list[str] = field(default_factory=list)  # any "Дополнительные сведения" rows, e.g. reliability flags
+    notes: list[Note] = field(default_factory=list)  # any "Дополнительные сведения" rows, e.g. reliability flags
+    # "Сведения о состоянии юридического лица": only present when the company is being
+    # liquidated/reorganized or ФНС decided to strike it off, e.g. "Находится в стадии ликвидации"
+    status: str | None = None
+    status_date: str | None = None
 
 
 def  _request_pdf_token(session: requests.Session, row_token: str) -> str:
@@ -348,7 +361,10 @@ def  parse_extract_pdf(pdf_bytes: bytes) -> EgrulExtract:
     event log, not an entity attribute, and only one sample PDF was
     available to reverse-engineer this against, so its layout (variable
     number of entries, nested "Сведения о документах" sub-rows) wasn't
-    worth guessing at.
+    worth guessing at. The company's current state (liquidation, upcoming
+    strike-off) is read from "Сведения о состоянии юридического лица"
+    instead (checked on a real extract of a company in liquidation; the
+    section may have no ГРН row, then status_date stays None).
 
     Legal-entity founders (as opposed to individual people) are only
     best-effort supported (full_name/ogrn/inn on Person) since no real
@@ -382,9 +398,16 @@ def  parse_extract_pdf(pdf_bytes: bytes) -> EgrulExtract:
 
         if label_c == "Дополнительные сведения":
             if value_c:
-                extract.notes.append(value_c)
+                extract.notes.append(Note(section=section, text=value_c))
             continue
         if "ГРН и дата" in label_c:
+            # the entry date matters for a note or a status: deadlines are counted from it
+            entry_date = (_lines(value) or [None])[-1]
+            last_note = extract.notes[-1] if extract.notes else None
+            if last_note and last_note.section == section and last_note.date is None:
+                last_note.date = entry_date
+            elif section.startswith(STATE_SECTION) and extract.status_date is None:
+                extract.status_date = entry_date
             continue
         if section == "Сведения о записях, внесенных в Единый государственный реестр юридических лиц":
             break
@@ -394,6 +417,9 @@ def  parse_extract_pdf(pdf_bytes: bytes) -> EgrulExtract:
                 extract.full_name = value_c
             elif label_c.startswith("Сокращенное наименование"):
                 extract.short_name = value_c
+        elif section.startswith(STATE_SECTION):
+            if label_c == "Состояние":
+                extract.status = value_c
         elif section == "Место нахождения и адрес юридического лица":
             if label_c == "Место нахождения юридического лица":
                 extract.location = value_c

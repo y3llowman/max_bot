@@ -287,7 +287,7 @@ def to_feed_item(meta: dict, c: Classification, published: date, text: str = "")
             if len(today_or_later) > 1 else ""),
         actions=actions + ("Прочитайте полный текст акта по ссылке ниже.",),
         act=(meta.get("complexName") or "").split("\n")[0],
-        source_url=f"http://publication.pravo.gov.ru/document/{meta['eoNumber']}",  # TODO: сверить формат
+        source_url=f"http://publication.pravo.gov.ru/document/{meta['eoNumber']}",  # проверено 27.09.2026
         official_url=f"http://publication.pravo.gov.ru/document/{meta['eoNumber']}",
         effective_from=today_or_later[0] if today_or_later else None,
         audience=c.audience,

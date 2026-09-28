@@ -35,7 +35,7 @@ async def fetch_published(client: httpx.AsyncClient, day: date) -> list[dict]:
         while True:
             r = await client.get(f"{API}/Documents", params={
                 "Block": block, "PeriodType": "day",
-                "Date": day.strftime("%d.%m.%Y"),   # TODO: сверить формат даты на живом API
+                "Date": day.strftime("%d.%m.%Y"),   # ДД.ММ.ГГГГ — проверено 27.09.2026; ISO API молча игнорирует
                 "PageSize": 200, "Index": page})
             r.raise_for_status()
             data = r.json()

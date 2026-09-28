@@ -77,6 +77,7 @@ const httpApi: Api = {
   refreshCompany: () => request("POST", "/company/refresh"),
   notifications: () => request("GET", "/settings/notifications"),
   saveNotifications: (s) => request("PUT", "/settings/notifications", s),
+  markNotificationsSeen: () => request("POST", "/settings/notifications/seen"),
   markSubmitted: (id) => request("POST", `/tasks/${encodeURIComponent(id)}/submitted`),
   undoSubmitted: (id) => request("DELETE", `/tasks/${encodeURIComponent(id)}/submitted`),
   generateDocument: (id) => request("POST", `/tasks/${encodeURIComponent(id)}/document`),

@@ -1,5 +1,5 @@
 """Общий клиент MAX: им шлют сообщения и бот, и API (документ в чат), и планировщик.
-bot/sender.py — остаток от Telegram, не использовать."""
+Мёртвый код от Telegram-шаблона удалён."""
 from maxapi import Bot
 from maxapi.enums.parse_mode import ParseMode
 from maxapi.types.attachments.attachment import ButtonsPayload
@@ -8,15 +8,19 @@ from core.env import ENV
 
 bot = Bot(token=ENV.MAX_BOT_TOKEN.get_secret_value())
 
-_bot_id: int | None = None
+_bot_app: dict | None = None
 
 
-async def bot_id() -> int:
-    """id бота — для кнопки open_app, которая открывает его мини-приложение."""
-    global _bot_id
-    if _bot_id is None:
-        _bot_id = (await bot.get_me()).user_id
-    return _bot_id
+async def bot_app() -> dict:
+    """Поля кнопки open_app, которая открывает мини-приложение бота. MAX требует web_app —
+    публичное имя бота (без него 400 «Field 'webApp' cannot be null»); contact_id — его id."""
+    global _bot_app
+    if _bot_app is None:
+        me = await bot.get_me()
+        if not me.username:
+            raise RuntimeError("У бота нет публичного имени (username) — кнопка open_app без него не работает")
+        _bot_app = {"web_app": me.username, "contact_id": me.user_id}
+    return _bot_app
 
 
 async def send_html(max_user_id: int, text: str, keyboard: dict | None = None) -> str | None:

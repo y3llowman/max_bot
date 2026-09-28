@@ -22,8 +22,21 @@ const company: Company = {
   headcount: "36–100 человек",
   region: "Москва",
   source: { name: "ФНС", demo: true, updatedAt: "2026-07-22T08:12:00" },
-  counterparties: 8,
+  benefits: [
+    {
+      title: "Декларации можно сдавать на бумаге: среднесписочная численность за прошлый год не больше 100 (НДС — всё равно только электронно)",
+      basis: "п. 3 ст. 80 НК РФ",
+      url: "https://www.consultant.ru/document/cons_doc_LAW_19671/b57ec74ce66c7a42202cfb47175a12ea4722bc99/",
+    },
+    {
+      title: "Можно применять УСН: средняя численность работников не больше 130",
+      basis: "пп. 15 п. 3 ст. 346.12 НК РФ",
+      url: "https://www.consultant.ru/document/cons_doc_LAW_28165/a1d86f7078e645869b02fde85e8c972193557dee/",
+    },
+  ],
 };
+
+let unread = true;
 
 const tasks: Task[] = [
   { id: "req-12-45-3817", title: "Ответ на требование ФНС", subtitle: "№ 12-45/3817 · пояснения", status: "overdue", due: "2026-07-20" },
@@ -164,7 +177,7 @@ export const mockApi: Api = {
         },
         tasks: all.filter((t) => t.status !== "done"),
         nextDue: "2026-08-25",
-        unread: true,
+        unread,
         savedAt: mockNow(),
       };
     }),
@@ -200,16 +213,25 @@ export const mockApi: Api = {
 
   company: () => delay(() => load<Company>(SESSION_KEY) ?? company),
 
-  refreshCompany: () => {
-    const c = { ...(load<Company>(SESSION_KEY) ?? company), source: { ...company.source, updatedAt: mockNow() } };
-    save(SESSION_KEY, c);
-    return ok(c);
-  },
+  // как на сервере: реестры ФНС отвечают несколько секунд — радар успевает покрутиться
+  refreshCompany: () =>
+    new Promise((resolve) =>
+      setTimeout(() => {
+        const c = { ...(load<Company>(SESSION_KEY) ?? company), source: { ...company.source, updatedAt: mockNow() } };
+        save(SESSION_KEY, c);
+        resolve(c);
+      }, 2400),
+    ),
 
   notifications: () => delay(() => notifications),
 
   saveNotifications: (next) => {
     notifications = next;
+    return ok(undefined);
+  },
+
+  markNotificationsSeen: () => {
+    unread = false;
     return ok(undefined);
   },
 

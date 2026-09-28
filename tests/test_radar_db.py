@@ -38,10 +38,11 @@ TODAY = date(2026, 9, 26)
 MORNING = datetime(2026, 9, 26, 9, 0, tzinfo=MSK)
 INN = "7707083893"
 MAX_USER = 111
+BOT_APP = {"web_app": "radar_bot", "contact_id": 999}  # bot.client.bot_app()
 RECORD = RmspRecord(
     name='ООО "СЕВЕРНЫЙ ВЕТЕР"', subject_type="UL", category=1, ogrn="1027700132195", inn=INN,
     main_activity_code="41.20", main_activity_name="Строительство жилых и нежилых зданий", region_code="16",
-    is_new=False, date_registered="10.08.2016", date_excluded=None, phone=None, email=None, website=None,
+    is_new=False, date_registered="10.08.2016", date_excluded=None, phone=None, email=None, website=None, employees_num=None,
     has_licenses=False, is_hitech=False, is_partnership=False, is_social=False,
 )
 
@@ -59,7 +60,7 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
             await save_business(db, user.id, RECORD)
         self.send = AsyncMock(return_value="mid-1")
         patches = [patch.object(worker, "send_html", self.send),
-                   patch.object(worker, "bot_id", AsyncMock(return_value=999))]
+                   patch.object(worker, "bot_app", AsyncMock(return_value=BOT_APP))]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
@@ -117,11 +118,11 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         await worker.dispatch()
         self.send.assert_awaited_once()  # все сроки на 26 октября — одним сообщением
         _, text, kb = self.send.await_args.args
-        self.assertIn("Через 30 дней: 26 октября 2026", text)
+        self.assertIn(" дней: 26 октября 2026", text)  # «через N» — от настоящей даты, dispatch берёт now
         self.assertIn("Срок перенесён с 25 октября 2026", text)
         self.assertIn("почему вам: у вас есть сотрудники", text)
         buttons = [b for row in kb["payload"]["buttons"] for b in row]
-        self.assertIn({"type": "open_app", "text": "Открыть", "contact_id": 999,
+        self.assertIn({"type": "open_app", "text": "Открыть", "web_app": "radar_bot", "contact_id": 999,
                        "payload": f"task_{pending[0].event_id}"}, buttons)
         self.assertTrue(all(n.status == "sent" for n in await self.notifications()))
 
@@ -182,6 +183,45 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         [event] = await worker.process_msp(INN, grown, TODAY)
         self.assertEqual((event.type, event.payload["lost_micro"], event.due), ("msp.category_changed", True, date(2027, 1, 26)))
 
+    # ---- ЕГРЮЛ
+    async def test_egrul_unreliable_mark_and_its_removal(self):
+        marked = {"inn": INN, "notes": [{"section": "Место нахождения и адрес юридического лица",
+                                         "text": "сведения недостоверны", "date": "19.08.2026"}]}
+        with patch.object(worker, "fetch_egrul", AsyncMock(return_value=marked)):
+            await worker.process_egrul(INN, TODAY)
+            await worker.process_egrul(INN, TODAY)  # повторная проверка — без второго события
+        [event] = await self.events(type="egrul.unreliable")
+        self.assertEqual(event.due, date(2027, 2, 19))
+        await worker.dispatch()
+        self.send.assert_awaited_once()
+        self.assertIn("В ЕГРЮЛ отметка о недостоверности сведений", self.send.await_args.args[1])
+
+        with patch.object(worker, "fetch_egrul", AsyncMock(return_value={"inn": INN, "notes": []})):
+            await worker.process_egrul(INN, TODAY)
+        self.assertIsNotNone((await self.events(type="egrul.unreliable"))[0].resolved_at)
+        await worker.dispatch()
+        self.assertIn("Отметка о недостоверности снята", self.send.await_args.args[1])
+
+    async def test_inspections_from_erknm(self):
+        from data_fetching.erknm_client import Knm
+        check = Knm(erpid="1001", inn=INN, classification="КНМ", status="Ожидает проведения",
+                    status_key="TYPE_WAITING_CARRY_OUT", kind="Документарная проверка", control="Пожарный надзор",
+                    authority="ГУ МЧС", type_name="Плановое КНМ", start="2026-10-19", stop="2026-10-21", warning=None)
+        month = lambda found: (lambda year, m, inns: found if (year, m) == (2026, 10) else [])
+        with patch.object(worker.erknm_client, "fetch_month", month([check])):
+            await worker.process_inspections({INN}, TODAY)
+            await worker.process_inspections({INN}, TODAY)  # повторная проверка — без второго события
+        [event] = await self.events(type="inspection.planned")
+        self.assertEqual((event.due, event.source), (date(2026, 10, 19), "erknm"))
+        await worker.dispatch()
+        self.send.assert_awaited_once()
+        self.assertIn("ГУ МЧС планирует документарную проверку", self.send.await_args.args[1])
+
+        cancelled = replace(check, status="Отменено", status_key="TYPE_CANCELED")
+        with patch.object(worker.erknm_client, "fetch_month", month([cancelled])):
+            await worker.process_inspections({INN}, TODAY)
+        self.assertEqual((await self.events(type="inspection.planned"))[0].status, "muted")
+
     async def test_demo_inspection(self):
         self.assertIn("Готово", await worker.demo_event(MAX_USER, "knm"))
         text = self.send.await_args.args[1]
@@ -203,6 +243,14 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         await self.answer("usn_income", 36)
         company = (await client.get("/api/company")).json()
         self.assertEqual((company["headcount"], company["needsAnswers"]), ("36–100 человек", False))
+        self.assertEqual([b["title"][:22] for b in company["benefits"]], ["Декларации можно сдава", "Можно применять УСН: с"])
+        self.assertNotIn("counterparties", company)
+
+        self.assertFalse((await client.get("/api/dashboard")).json()["unread"])
+        await worker.demo_remind(MAX_USER)  # бот прислал напоминание в чат
+        self.assertTrue((await client.get("/api/dashboard")).json()["unread"])
+        self.assertEqual((await client.post("/api/settings/notifications/seen")).status_code, 204)
+        self.assertFalse((await client.get("/api/dashboard")).json()["unread"])
 
         dashboard = (await client.get("/api/dashboard")).json()
         quota = next(t for t in dashboard["tasks"] if t["title"].startswith("Сведения о выполнении квоты"))
@@ -246,7 +294,7 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
     async def test_bot_asks_profile_questions_then_shows_obligations(self):
         from bot import message_handler as bot_flow
         say = AsyncMock()
-        with patch.object(bot_flow, "say", say), patch.object(bot_flow, "bot_id", AsyncMock(return_value=999)):
+        with patch.object(bot_flow, "say", say), patch.object(bot_flow, "bot_app", AsyncMock(return_value=BOT_APP)):
             await bot_flow.next_step(MAX_USER)
             self.assertIn("режим налогообложения", say.await_args.args[1])
             await self.answer("usn_income", None)
@@ -258,10 +306,34 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Радар настроен: 10 обязанностей", summary)
         self.assertIn("• Декларация по УСН", summary)
         async with SessionLocal() as db:
-            card = bot_flow.company_card(await db.get(Business, INN), await db.get(BusinessProfile, INN))
+            card = bot_flow.company_card(await db.get(Business, INN), await worker.load_profile(db, INN))
         self.assertIn("ОКВЭД: 41.20 — Строительство жилых и нежилых зданий", card)
         self.assertIn("Микропредприятие · 1–15 человек", card)
         self.assertIn("Регион: Республика Татарстан", card)
+
+    async def test_registry_headcount_skips_question(self):
+        from bot import message_handler as bot_flow
+        async with SessionLocal() as db:
+            (await db.get(Business, INN)).employees_num = 12  # среднесписочная из реестра МСП
+            await db.commit()
+        say = AsyncMock()
+        with patch.object(bot_flow, "say", say), patch.object(bot_flow, "bot_app", AsyncMock(return_value=BOT_APP)):
+            await self.answer("usn_income", None)
+            await bot_flow.next_step(MAX_USER)
+        summary = say.await_args.args[1]
+        self.assertIn("Радар настроен", summary, "о численности не спрашиваем — она есть в реестре")
+        self.assertIn("Доступно при вашей численности", summary)
+        self.assertIn("Можно применять УСН", summary)
+        self.assertNotIn("АУСН", summary, "12 человек — больше порога АУСН")
+        async with SessionLocal() as db:
+            profile = await worker.load_profile(db, INN)
+            self.assertIn("Микропредприятие · 12 человек (ФНС)", bot_flow.company_card(await db.get(Business, INN), profile))
+        self.assertEqual((profile.headcount, profile.headcount_exact, profile.has_employees), (12, True, True))
+
+        await self.answer("usn_income", 36)  # поправили в /profile — ответ важнее реестра
+        async with SessionLocal() as db:
+            profile = await worker.load_profile(db, INN)
+        self.assertEqual((profile.headcount, profile.headcount_exact), (36, False))
 
 
 if __name__ == "__main__":

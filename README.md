@@ -1,15 +1,15 @@
 # MAX Mini App + FastAPI + PostgreSQL
 
-Шаблон для хакатона: Mini App внутри мессенджера MAX, SvelteKit frontend, FastAPI backend и PostgreSQL.
+Шаблон для хакатона: Mini App внутри мессенджера MAX (React + Vite, папка `miniapp/`), FastAPI backend и PostgreSQL. Что сейчас умеет продукт — в [CURRENT_STATE.md](CURRENT_STATE.md).
 
 ## Что было изменено относительно исходного шаблона
 
-Исходный проект был шаблоном Telegram WebApp: SvelteKit + FastAPI + MongoDB/Beanie/Motor + RabbitMQ + JWT. Это видно в исходной конфигурации и `README`, а также в исходных auth/db-модулях. Теперь активный runtime переведён на MAX Bridge и PostgreSQL/SQLAlchemy. Старые Telegram/RabbitMQ файлы оставлены как reference, но не подключаются новым `backend/main.py`.
+Исходный проект был шаблоном Telegram WebApp: SvelteKit + FastAPI + MongoDB/Beanie/Motor + RabbitMQ + JWT. Это видно в исходной конфигурации и `README`, а также в исходных auth/db-модулях. Теперь активный runtime переведён на MAX Bridge и PostgreSQL/SQLAlchemy. Старые Telegram/RabbitMQ файлы и SvelteKit-фронтенд удалены.
 
 ### Новый стек
 
 - **MAX Mini App / MAX Bridge** — окружение приложения внутри MAX.
-- **SvelteKit + TypeScript** — UI.
+- **React + Vite + TypeScript** (`miniapp/`) — UI.
 - **FastAPI** — REST API.
 - **PostgreSQL** — основная БД.
 - **SQLAlchemy 2 async + asyncpg** — доступ к PostgreSQL.
@@ -111,7 +111,7 @@ docker compose down -v         # то же самое, но и данные Post
 
 ### Шаг 1 — MAX открывает frontend
 
-`frontend/src/app.html` подключает MAX Bridge:
+`miniapp/index.html` подключает MAX Bridge:
 
 ```html
 <script src="https://st.max.ru/js/max-web-app.js"></script>
@@ -155,7 +155,6 @@ Backend выдаёт access token. Все следующие защищённы�
 Authorization: Bearer <token>
 ```
 
-Полное объяснение находится в [`docs/BACKEND_GUIDE.md`](docs/BACKEND_GUIDE.md).
 
 ## API
 
@@ -247,7 +246,7 @@ FastAPI router
 backend/
 ├── main.py                    # FastAPI app, entrypoint контейнера
 ├── app/
-│   ├── api/routes/            # HTTP endpoints (users, mailing, telegram)
+│   ├── api/routes/            # HTTP endpoints (users, company, tasks, settings)
 │   └── api/depends.py         # FastAPI-зависимости (auth и т.д.)
 ├── databases/                 # всё, что касается БД
 │   ├── engine_start.py        # async engine + SessionLocal + get_db
@@ -255,7 +254,7 @@ backend/
 │   └── businesses_db.py       # модели Business и UserBusiness, таблицы `businesses` и `user_businesses`
 ├── data_fetching/
 │   └── rmsp_client.py         # клиент реестра МСП (rmsp.nalog.ru), поиск компании по ИНН
-├── bot/                       # MAX/Telegram-хендлеры (частично legacy, см. ниже)
+├── bot/                       # бот MAX: онбординг, кнопки под напоминаниями
 └── core/
     ├── config.py
     ├── security.py
@@ -266,7 +265,7 @@ backend/
 
 ### Схема данных
 
-- **`users`** — участник MAX/Telegram: `max_user_id`, `username`, `first_name`, `last_name`, `photo_url`.
+- **`users`** — участник MAX: `max_user_id`, `username`, `first_name`, `last_name`, `photo_url`.
 - **`user_businesses`** — какие ИНН отслеживает пользователь, связь многие-ко-многим: `user_id` (`ForeignKey("users.id")`) + `inn` (`ForeignKey("businesses.inn")`), составной первичный ключ. У пользователя может быть несколько ИНН, один ИНН могут отслеживать несколько пользователей.
 - **`businesses`** — данные компании из реестра МСП, ключ — `inn`: `name`, `subject_type` (`UL`/`IP`), `category`, `ogrn`, `main_activity_code/name` (ОКВЭД), `region_code`, даты регистрации/исключения из реестра, контакты, флаги (`has_licenses`, `is_hitech`, `is_partnership`, `is_social`).
 - Заполняется через `data_fetching/rmsp_client.py::fetch_by_inn(inn)` — POST-запрос к недокументированному эндпоинту `rmsp.nalog.ru/search-proc.json`. Пока это отдельный скрипт, не подключённый как FastAPI-роут.
@@ -309,7 +308,6 @@ MongoDB имеет смысл, если данные действительно 
 2. JWT хранится в `localStorage` для простоты демо. Для более строгого production-сценария можно использовать возможности `SecureStorage` MAX Bridge.
 3. Нет rate limiting.
 4. Нет полноценного слоя service/repository — для хакатонного MVP это избыточно, его стоит добавить при росте логики.
-5. Старые Telegram/RabbitMQ файлы не удалены, чтобы можно было сравнить архитектуры и миграцию.
 
 ## Важная безопасность
 

@@ -11,6 +11,9 @@ NEW_COLUMNS = (
     "ALTER TABLE user_businesses ADD COLUMN IF NOT EXISTS connected_at TIMESTAMPTZ NOT NULL DEFAULT now()",
     "ALTER TABLE business_profiles ADD COLUMN IF NOT EXISTS headcount INTEGER",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_settings JSONB",
+    "ALTER TABLE businesses ADD COLUMN IF NOT EXISTS employees_num INTEGER",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS notifications_seen_at TIMESTAMPTZ",
+    "ALTER TABLE businesses ALTER COLUMN employees_num DROP NOT NULL",
 )
 
 

@@ -6,10 +6,12 @@ import { ContextBar } from "../components/ContextBar";
 import { Icon } from "../components/Icon";
 import { ListCell, ListGroup } from "../components/List";
 import { APP_NAME, Screen } from "../components/Screen";
+import { SectionHeader } from "../components/SectionHeader";
 import { useToast } from "../components/Toast";
 import { updatedAt } from "../utils/dates";
 import { THEME_LABELS, setThemePref, useThemePref, type ThemePref } from "../utils/theme";
 import { useAsync } from "../utils/useAsync";
+import { openLink } from "../max/bridge";
 import { useSession } from "../session";
 import s from "./Profile.module.css";
 
@@ -48,18 +50,22 @@ export function Profile() {
     <Screen title={APP_NAME}>
       <ContextBar />
       <CompanyCard company={company} refreshing={refreshing} onRefresh={refresh} />
+      {company.benefits && company.benefits.length > 0 && (
+        <>
+          <SectionHeader title="Доступно при вашей численности" />
+          <ListGroup>
+            {company.benefits.map((b) => (
+              <ListCell key={b.title} title={b.title} caption={b.basis} chevron onClick={() => openLink(b.url)} />
+            ))}
+          </ListGroup>
+        </>
+      )}
       <ListGroup>
         <ListCell
           title="Уведомления"
           value={notif ? channelsSummary(notif) : undefined}
           chevron
           onClick={() => navigate("/notifications")}
-        />
-        <ListCell
-          title="Контрагенты"
-          value={String(company.counterparties)}
-          chevron
-          onClick={() => toast({ text: "Список контрагентов появится в следующей версии", icon: "info" })}
         />
         <ListCell
           title="Тема оформления"

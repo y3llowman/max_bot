@@ -11,7 +11,8 @@ REGIME_RU = {
     "psn": "патент (ПСН)",
 }
 
-# Численность спрашиваем диапазоном; храним нижнюю границу (business_profiles.headcount).
+# Численность берём из реестра МСП (businesses.employees_num, точное число), если её там нет —
+# спрашиваем диапазоном и храним нижнюю границу (business_profiles.headcount).
 # Границы — пороги обязанностей: есть ли сотрудники, квота для инвалидов (больше 35).
 HEADCOUNT_RU = {
     0: "нет сотрудников",
@@ -97,6 +98,18 @@ REGIONS = {
 }
 
 
+def headcount_ru(p: Profile) -> str | None:
+    """«12 человек (ФНС)» из реестра или «16–25 человек» из ответа."""
+    if p.headcount is None:
+        return None
+    if not p.headcount_exact:
+        return HEADCOUNT_RU[p.headcount]
+    if p.headcount == 0:
+        return "нет сотрудников (ФНС)"
+    word = "человек" if p.headcount % 10 not in (2, 3, 4) or 12 <= p.headcount % 100 <= 14 else "человека"
+    return f"{p.headcount} {word} (ФНС)"
+
+
 def region_name(code: str | None) -> str | None:
     return REGIONS.get((code or "").zfill(2)) if code else None
 
@@ -111,16 +124,18 @@ class Profile:
     msp_category: int | None = None
     tax_regime: str | None = None
     has_employees: bool | None = None
-    headcount: int | None = None     # нижняя граница диапазона из HEADCOUNT_RU
+    headcount: int | None = None     # точное число из реестра или нижняя граница диапазона из HEADCOUNT_RU
+    headcount_exact: bool = False    # True — среднесписочная из реестра МСП
     hints: dict[str, str] = field(default_factory=dict)
     flags: dict[str, bool] = field(default_factory=dict)
 
     def headcount_benefits(self) -> list[HeadcountBenefit]:
-        """Льготы, которым численность точно не мешает. headcount — нижняя граница диапазона,
-        поэтому сравниваем верхнюю: при «1–15 человек» порог АУСН (5) неизвестен и не попадёт."""
+        """Льготы, которым численность точно не мешает. Для диапазона сравниваем его верхнюю границу:
+        при «1–15 человек» порог АУСН (5) неизвестен и не попадёт."""
         if self.headcount is None:
             return []
-        upper = next((b - 1 for b in sorted(HEADCOUNT_RU) if b > self.headcount), None)
+        upper = self.headcount if self.headcount_exact else next(
+            (b - 1 for b in sorted(HEADCOUNT_RU) if b > self.headcount), None)
         if upper is None:  # «больше 100 человек» — верхней границы нет
             return []
         return [b for b in HEADCOUNT_BENEFITS if upper <= b.limit and not (b.ip_only and self.is_legal_entity)]

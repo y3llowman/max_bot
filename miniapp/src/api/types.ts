@@ -55,6 +55,7 @@ export interface DashboardData {
   tasks: Task[];
   /** Ближайший срок за пределами недели — для пустого состояния. */
   nextDue?: string;
+  /** Бот присылал что-то в чат после последнего открытия экрана «Уведомления» — точка на колокольчике. */
   unread: boolean;
   /** Когда данные получены, ISO — для «Сохранено 21 июля, 18:40». */
   savedAt?: string;
@@ -82,7 +83,15 @@ export interface Company {
   /** Режим или численность не указаны — без ответов бот видит не все обязанности. */
   needsAnswers?: boolean;
   source: { name: string; demo: boolean; updatedAt: string };
-  counterparties: number;
+  /** Льготы, которые доступны при численности компании: «Можно применять УСН…». */
+  benefits?: Benefit[];
+}
+
+export interface Benefit {
+  title: string;
+  /** «пп. 15 п. 3 ст. 346.12 НК РФ» */
+  basis: string;
+  url: string;
 }
 
 export type RemindMode = "d30-7-1" | "d7-3-1" | "d3-0" | "d0";

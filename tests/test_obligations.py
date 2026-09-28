@@ -32,6 +32,13 @@ class WorkdayTest(unittest.TestCase):
     def test_new_year_holidays_and_decree(self):
         self.assertEqual(next_workday(date(2026, 1, 3)), date(2026, 1, 12))   # 9 января — перенос
         self.assertEqual(next_workday(date(2026, 12, 31)), date(2027, 1, 11))  # 31 декабря — перенос
+        # 2027, постановление № 1187: 20.02 (сб) — рабочий, 22.02 и 5.11 — выходные, 1 и 9 мая, 12 июня — на пн
+        self.assertEqual(next_workday(date(2027, 2, 20)), date(2027, 2, 20))
+        self.assertEqual(next_workday(date(2027, 2, 21)), date(2027, 2, 24))
+        self.assertEqual(next_workday(date(2027, 5, 1)), date(2027, 5, 4))
+        self.assertEqual(next_workday(date(2027, 5, 9)), date(2027, 5, 11))
+        self.assertEqual(next_workday(date(2027, 6, 12)), date(2027, 6, 15))
+        self.assertEqual(next_workday(date(2027, 11, 4)), date(2027, 11, 8))
 
     def test_holiday_on_weekend_gives_extra_day_off(self):
         self.assertEqual(next_workday(date(2026, 5, 9)), date(2026, 5, 12))   # 9 мая — суббота → 11 мая выходной

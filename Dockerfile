@@ -11,6 +11,6 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml README.md ./
 RUN uv pip install --system .
 COPY backend/ ./backend/
-COPY --from=frontend-builder /app/build ./frontend/build
+COPY --from=frontend-builder /app/build ./miniapp/build
 ENV PYTHONUNBUFFERED=1
 CMD ["python", "backend/main.py"]

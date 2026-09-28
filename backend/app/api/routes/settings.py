@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,4 +23,11 @@ async def save_notification_settings(
     db: AsyncSession = Depends(get_db),
 ):
     user.notification_settings = settings.model_dump()
+    await db.commit()
+
+
+@router.post("/notifications/seen", status_code=204)
+async def mark_notifications_seen(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Экран «Уведомления» открыт — всё, что бот прислал в чат до этого момента, считается просмотренным."""
+    user.notifications_seen_at = datetime.now(timezone.utc)
     await db.commit()

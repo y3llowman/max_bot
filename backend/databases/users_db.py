@@ -25,3 +25,5 @@ class User(Base):
     last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # экран «Уведомления» мини-приложения; пусто — значения по умолчанию (notifications/settings.py)
     notification_settings: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # когда пользователь последний раз открыл экран «Уведомления» — точка на колокольчике гаснет
+    notifications_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

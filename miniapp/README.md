@@ -122,8 +122,9 @@ Payload — до 512 символов, только `[A-Za-z0-9_-]` (огран�
 | GET | `/tasks/:id` | `TaskDetails`; 404 — задачи нет |
 | GET | `/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD` | `Task[]`, включая выполненные |
 | GET | `/company` | `Company` |
-| POST | `/company/refresh` | `Company` — перечитать данные из ФНС |
+| POST | `/company/refresh` | `Company` — перечитать реестр МСП; выписку ЕГРЮЛ сервер проверит в фоне |
 | GET / PUT | `/settings/notifications` | `NotificationSettings` |
+| POST | `/settings/notifications/seen` | 204 — экран «Уведомления» открыт, `unread` на дашборде гаснет |
 | POST / DELETE | `/tasks/:id/submitted` | 204 — «Уже подано» и его отмена |
 | POST | `/tasks/:id/document` | 204 — сформировать документ, бот пришлёт его в чат |
 

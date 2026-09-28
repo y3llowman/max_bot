@@ -1,4 +1,4 @@
-"""Ответы API мини-приложения — зеркало frontend/src/api/types.ts.
+"""Ответы API мини-приложения — зеркало miniapp/src/api/types.ts.
 
 Фронт ждёт camelCase (fullName, nextDue, updatedAt): поля описаны в snake_case,
 а наружу уходят по алиасам. Необязательные поля в контракте — `?:`, а не null,
@@ -21,6 +21,12 @@ class Source(CamelModel):
     updated_at: datetime
 
 
+class Benefit(CamelModel):
+    title: str
+    basis: str
+    url: str
+
+
 class Company(CamelModel):
     name: str
     full_name: str
@@ -35,7 +41,7 @@ class Company(CamelModel):
     region: str | None = None      # «Республика Татарстан»
     needs_answers: bool            # режим или численность не указаны — обязанности неполные
     source: Source
-    counterparties: int
+    benefits: list[Benefit] = []   # льготы, которые доступны при численности компании (radar.deadlines)
 
 
 class Task(CamelModel):

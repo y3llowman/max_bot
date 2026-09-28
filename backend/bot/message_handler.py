@@ -13,7 +13,7 @@ from maxapi.filters.command import Command, CommandStart
 from maxapi.types import BotStarted, ButtonsPayload, CallbackButton, MessageCallback, MessageCreated, OpenAppButton
 from maxapi.context import BaseContext, State, StatesGroup
 
-from bot.client import bot, bot_id
+from bot.client import bot, bot_app
 from core.config import DEBUG
 from data_fetching import rmsp_client
 from databases.businesses_db import Business, current_business, save_business
@@ -21,7 +21,7 @@ from databases.engine_start import SessionLocal
 from databases.users_db import User
 from notifications import worker
 from notifications.models import BusinessProfile, RadarEvent
-from radar.deadlines import CATEGORY_RU, HEADCOUNT_RU, REGIME_RU, region_name
+from radar.deadlines import CATEGORY_RU, HEADCOUNT_RU, REGIME_RU, Profile, headcount_ru, region_name
 from radar.render import company_name, date_ru, date_short, plural
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ def is_valid_inn(inn: str) -> bool:
 
 ASK_INN = "Пришлите ИНН компании или ИП — 10 или 12 цифр. Профиль соберём сами из реестров ФНС."
 
-# Режима и численности нет в открытых реестрах — спрашиваем одним тапом
+# Режима нет в открытых реестрах, численность есть не у всех — спрашиваем одним тапом
 QUESTIONS = {
     "regime": ("Какой у вас режим налогообложения? От него зависят декларации и сроки уплаты.", REGIME_RU),
     "staff": ("Сколько у вас сотрудников? От этого зависят отчёты за работников и квота для инвалидов.",
@@ -62,11 +62,9 @@ QUESTIONS = {
 }
 
 
-def company_card(business: Business, profile: BusinessProfile | None) -> str:
+def company_card(business: Business, profile: Profile) -> str:
     """Профиль компании: название, ОКВЭД, категория, численность, регион — всё из реестров и ответов."""
-    size = [CATEGORY_RU.get(business.category)]
-    if profile and profile.headcount is not None:
-        size.append(HEADCOUNT_RU[profile.headcount])
+    size = [CATEGORY_RU.get(business.category), headcount_ru(profile)]
     lines = [
         f"<b>{html.escape(company_name(business.name))}</b>",
         f"ИНН {business.inn} · ОГРН {business.ogrn}",
@@ -74,14 +72,14 @@ def company_card(business: Business, profile: BusinessProfile | None) -> str:
         " · ".join(filter(None, size)),
         f"Регион: {region_name(business.region_code) or business.region_code}",
     ]
-    if profile and profile.tax_regime:
+    if profile.tax_regime:
         lines.append(f"Режим: {REGIME_RU[profile.tax_regime]}")
     lines.append(f"<i>Источник: реестр МСП (ФНС), данные на {date_ru(business.updated_at.date())}</i>")
     return "\n".join(line for line in lines if line)
 
 
-def app_keyboard(app_id: int):
-    return ButtonsPayload(buttons=[[OpenAppButton(text="Открыть ленту обязанностей", contact_id=app_id)]]).pack()
+def app_keyboard(app: dict):
+    return ButtonsPayload(buttons=[[OpenAppButton(text="Открыть ленту обязанностей", **app)]]).pack()
 
 
 def question_keyboard(question: str):
@@ -104,6 +102,7 @@ async def find_user(db, max_user_id: int) -> User | None:
 async def obligations_summary(inn: str) -> str:
     today = date.today()
     async with SessionLocal() as db:
+        profile = await worker.load_profile(db, inn)
         events = list(await db.scalars(
             select(RadarEvent)
             .where(RadarEvent.inn == inn, RadarEvent.key.like(f"obl:{inn}:%"),
@@ -116,6 +115,10 @@ async def obligations_summary(inn: str) -> str:
     if events:
         lines += ["", "<b>Ближайшие сроки</b>"]
         lines += [f"• {date_short(e.due)} — {e.payload['title']} ({e.payload['period'].lower()})" for e in events[:5]]
+    benefits = profile.headcount_benefits()
+    if benefits:
+        lines += ["", "<b>Доступно при вашей численности</b>"]
+        lines += [f'• <a href="{b.url}">{b.title}</a> ({b.basis})' for b in benefits]
     lines += ["", "Напомню заранее и буду напоминать после срока, пока задача не закрыта. "
                   "Изменился режим или численность — /profile. Другая компания — пришлите её ИНН."]
     return "\n".join(lines)
@@ -126,15 +129,15 @@ async def next_step(max_user_id: int) -> None:
     async with SessionLocal() as db:
         user = await find_user(db, max_user_id)
         business = await current_business(db, user.id) if user else None
-        profile = await db.get(BusinessProfile, business.inn) if business else None
+        profile = await worker.load_profile(db, business.inn) if business else None
     if business is None:
         await say(max_user_id, ASK_INN)
-    elif profile is None or profile.tax_regime is None:
+    elif profile.tax_regime is None:
         await say(max_user_id, QUESTIONS["regime"][0], question_keyboard("regime"))
     elif profile.headcount is None:
         await say(max_user_id, QUESTIONS["staff"][0], question_keyboard("staff"))
     else:
-        await say(max_user_id, await obligations_summary(business.inn), app_keyboard(await bot_id()))
+        await say(max_user_id, await obligations_summary(business.inn), app_keyboard(await bot_app()))
 
 
 async def _save_business(max_user_id: int, sender, record: rmsp_client.RmspRecord) -> Business:
@@ -159,8 +162,9 @@ def _on_radar_done(task: asyncio.Task) -> None:
 
 
 def _start_radar(inn: str) -> None:
-    task = asyncio.create_task(worker.process_egrul(inn, date.today()))
-    task.add_done_callback(_on_radar_done)
+    """Медленные источники — в фоне: выписка ЕГРЮЛ и выгрузки ЕРКНМ."""
+    for job in (worker.process_egrul(inn, date.today()), worker.process_inspections({inn}, date.today())):
+        asyncio.create_task(job).add_done_callback(_on_radar_done)
 
 
 async def start(max_user_id: int, context: BaseContext) -> None:
@@ -191,14 +195,14 @@ async def on_profile(event: MessageCreated):
     async with SessionLocal() as db:
         user = await find_user(db, max_user_id)
         business = await current_business(db, user.id) if user else None
-        profile = await db.get(BusinessProfile, business.inn) if business else None
+        profile = await worker.load_profile(db, business.inn) if business else None
     if business is None:
         await say(max_user_id, ASK_INN)
         return
     await say(max_user_id, company_card(business, profile), ButtonsPayload(buttons=[
         [CallbackButton(text="Изменить режим налогообложения", payload="ask:regime")],
         [CallbackButton(text="Изменить численность", payload="ask:staff")],
-        [OpenAppButton(text="Открыть ленту обязанностей", contact_id=await bot_id())],
+        [OpenAppButton(text="Открыть ленту обязанностей", **await bot_app())],
     ]).pack())
 
 
@@ -254,8 +258,8 @@ async def on_inn(event: MessageCreated, context: BaseContext):
 
     await context.set_state(None)
     async with SessionLocal() as db:
-        profile = await db.get(BusinessProfile, inn)
-    await say(max_user_id, "Нашли вашу компанию:\n" + company_card(business, profile), app_keyboard(await bot_id()))
+        profile = await worker.load_profile(db, inn)
+    await say(max_user_id, "Нашли вашу компанию:\n" + company_card(business, profile), app_keyboard(await bot_app()))
     await next_step(max_user_id)
 
 
@@ -283,8 +287,9 @@ async def on_answer(event: MessageCallback):
         if business is None:
             await event.answer(notification="Сначала пришлите ИНН")
             return
+        current = await worker.load_profile(db, business.inn)
+        was_complete = current.tax_regime is not None and current.headcount is not None
         profile = await db.get(BusinessProfile, business.inn) or BusinessProfile(inn=business.inn, flags={}, bank_biks=[])
-        was_complete = profile.tax_regime is not None and profile.headcount is not None
         if question == "regime":
             profile.tax_regime = value
             label = REGIME_RU[value]
@@ -309,7 +314,7 @@ async def on_answer(event: MessageCallback):
         lines += ["", "<b>Больше не касаются</b>", *[f"• {title}" for title in removed]]
     if not added and not removed:
         lines.append("Список обязанностей не изменился.")
-    await say(max_user_id, "\n".join(lines), app_keyboard(await bot_id()))
+    await say(max_user_id, "\n".join(lines), app_keyboard(await bot_app()))
 
 
 @dp.message_callback(F.callback.payload.startswith("ev:"))

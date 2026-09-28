@@ -71,7 +71,16 @@ class Obligation:
 # рабочий день, кроме январских: их переносит постановление правительства (DECREE_DAYS_OFF).
 HOLIDAYS = ((1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8),
             (2, 23), (3, 8), (5, 1), (5, 9), (6, 12), (11, 4))
-DECREE_DAYS_OFF = {date(2026, 1, 9), date(2026, 12, 31)}  # постановление № 1466 от 24.09.2025
+DECREE_DAYS_OFF = {
+    date(2026, 1, 9), date(2026, 12, 31),                       # постановление № 1466 от 24.09.2025
+    date(2027, 2, 22), date(2027, 11, 5), date(2027, 12, 31),   # постановление № 1187 от 17.09.2026
+}
+# выходные, которые постановление сделало рабочими: срок, выпавший на них, не переносится
+DECREE_WORKDAYS = {date(2027, 2, 20)}                           # № 1187: суббота 20.02 → понедельник 22.02
+
+
+def is_weekend(d: date) -> bool:
+    return d.weekday() >= 5 and d not in DECREE_WORKDAYS
 
 
 def days_off(year: int) -> set[date]:
@@ -81,7 +90,7 @@ def days_off(year: int) -> set[date]:
         off.add(holiday)
         if month != 1 and holiday.weekday() >= 5:
             moved = holiday + timedelta(days=1)
-            while moved.weekday() >= 5 or moved in off:
+            while is_weekend(moved) or moved in off:
                 moved += timedelta(days=1)
             off.add(moved)
     return off
@@ -89,7 +98,7 @@ def days_off(year: int) -> set[date]:
 
 def next_workday(d: date) -> date:
     off = days_off(d.year) | days_off(d.year + 1)
-    while d.weekday() >= 5 or d in off:
+    while is_weekend(d) or d in off:
         d += timedelta(days=1)
     return d
 

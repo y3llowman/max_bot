@@ -11,8 +11,10 @@ import { APP_NAME, Screen } from "../components/Screen";
 import { SectionHeader } from "../components/SectionHeader";
 import { CardSkeleton, Skeleton } from "../components/Skeleton";
 import { NextDuePill, StateView } from "../components/StateView";
+import { RadarScan } from "../components/RadarScan";
 import { StatusTiles, StatusTilesSkeleton } from "../components/StatusTiles";
 import { TaskCard } from "../components/TaskCard";
+import { useToast } from "../components/Toast";
 import { dateTime, dayMonth, diffDays, parseISO, today } from "../utils/dates";
 import { dashboardGroups } from "../utils/tasks";
 import { useAsync } from "../utils/useAsync";
@@ -29,7 +31,7 @@ export function Dashboard() {
   let body: ReactNode = null;
   if (loading && !saved) body = <DashboardSkeleton />;
   else if (error && !saved) body = <DashboardError onRetry={reload} onShowSaved={setSaved} />;
-  else if (view) body = <DashboardContent data={view} stale={!!saved} />;
+  else if (view) body = <DashboardContent data={view} stale={!!saved} onScanned={reload} />;
 
   return (
     <Screen title={APP_NAME}>
@@ -39,18 +41,34 @@ export function Dashboard() {
   );
 }
 
-function DashboardContent({ data, stale }: { data: DashboardData; stale: boolean }) {
+function DashboardContent({ data, stale, onScanned }: { data: DashboardData; stale: boolean; onScanned: () => void }) {
   const navigate = useNavigate();
-  const { company } = useSession();
+  const { company, setCompany } = useSession();
+  const toast = useToast();
+  const [scanning, setScanning] = useState(false);
   const groups = dashboardGroups(data.tasks);
+
+  const scan = async () => {
+    setScanning(true);
+    try {
+      setCompany(await api.refreshCompany());
+      onScanned();
+      toast({ text: "Реестр МСП проверен, ЕГРЮЛ проверяем в фоне — находки придут в чат" });
+    } catch {
+      toast({ text: "ФНС не отвечает — попробуйте позже", icon: "alert-circle" });
+    } finally {
+      setScanning(false);
+    }
+  };
 
   return (
     <>
       {company?.needsAnswers && (
-        <Alert tone="info" title="Ответьте на 2 вопроса в чате" action={{ label: "Открыть чат", onClick: openChat }}>
-          Режима налогообложения и численности нет в открытых реестрах. Без них часть обязанностей не видна.
+        <Alert tone="info" title="Ответьте на вопросы в чате" action={{ label: "Открыть чат", onClick: openChat }}>
+          Режима налогообложения, а иногда и численности, нет в открытых реестрах. Без них часть обязанностей не видна.
         </Alert>
       )}
+      <RadarScan scanning={scanning} checkedAt={company?.source.updatedAt} onScan={scan} />
       {stale && data.savedAt && (
         <div>
           <Chip tone="neutral">{`Сохранено ${dateTime(data.savedAt)}`}</Chip>

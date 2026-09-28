@@ -9,14 +9,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.depends import get_current_business, get_current_user
-from app.api.schemas import Company, Source
+from app.api.schemas import Benefit, Company, Source
 from data_fetching import rmsp_client
 from databases import get_db
 from databases.businesses_db import Business, save_business
 from databases.users_db import User
-from notifications.models import BusinessProfile, RegistrySnapshot
-from notifications.worker import process_egrul, registry_loaded
-from radar.deadlines import CATEGORY_RU, HEADCOUNT_RU, REGIME_RU, region_name
+from notifications.models import RegistrySnapshot
+from notifications.worker import load_profile, process_egrul, process_inspections, registry_loaded
+from radar.deadlines import CATEGORY_RU, REGIME_RU, headcount_ru, region_name
 
 router = APIRouter(tags=["company"])
 
@@ -29,10 +29,9 @@ async def to_company(db: AsyncSession, business: Business) -> Company:
     full_name = re.sub(r'"([^"]*)"', r"«\1»", business.name)  # ООО "МОСТАР" → ООО «МОСТАР»
     quoted = re.search(r"«[^»]*»", full_name)
     name = quoted.group(0) if quoted else full_name
-    # режим и численность — из профиля радара, его заполняют ответы на вопросы бота
-    profile = await db.get(BusinessProfile, business.inn)
-    regime = REGIME_RU.get(profile.tax_regime) if profile else None
-    headcount = profile.headcount if profile else None
+    # режим — из ответов на вопросы бота, численность — из реестра МСП или ответа (worker.load_profile)
+    profile = await load_profile(db, business.inn)
+    regime = REGIME_RU.get(profile.tax_regime)
     # КПП — из последней выписки ЕГРЮЛ, она скачивается в фоне после подключения
     egrul = (await db.execute(
         select(RegistrySnapshot.data)
@@ -49,11 +48,11 @@ async def to_company(db: AsyncSession, business: Business) -> Company:
         ogrn=business.ogrn,
         okved=f"{business.main_activity_code} — {business.main_activity_name}",
         category=CATEGORY_RU.get(business.category),
-        headcount=HEADCOUNT_RU.get(headcount) if headcount is not None else None,
+        headcount=headcount_ru(profile),
         region=region_name(business.region_code),
-        needs_answers=regime is None or headcount is None,
+        needs_answers=regime is None or profile.headcount is None,
         source=Source(name="Реестр МСП (ФНС)", demo=False, updated_at=business.updated_at.replace(microsecond=0)),
-        counterparties=0,  # контрагентов пока не храним
+        benefits=[Benefit(title=b.title, basis=b.basis, url=b.url) for b in profile.headcount_benefits()],
     )
 
 
@@ -83,15 +82,22 @@ async def connect_company(
     db: AsyncSession = Depends(get_db),
 ):
     business = await load_from_registry(db, user, payload.inn)
-    # выписка ЕГРЮЛ (КПП, адрес, директор — для документов) скачивается медленно, поэтому в фоне
+    # выписка ЕГРЮЛ (КПП, адрес, директор — для документов) и выгрузки ЕРКНМ скачиваются медленно — в фоне
     background.add_task(process_egrul, business.inn, date.today())
+    background.add_task(process_inspections, {business.inn}, date.today())
     return await to_company(db, business)
 
 
 @router.post("/company/refresh", response_model=Company, response_model_exclude_none=True)
 async def refresh_company(
+    background: BackgroundTasks,
     business: Business = Depends(get_current_business),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await to_company(db, await load_from_registry(db, user, business.inn))
+    """«Обновить» в профиле и «Просканировать сейчас» на дашборде: реестр МСП сразу, ЕГРЮЛ и ЕРКНМ — в фоне,
+    находки придут в чат."""
+    business = await load_from_registry(db, user, business.inn)
+    background.add_task(process_egrul, business.inn, date.today())
+    background.add_task(process_inspections, {business.inn}, date.today())
+    return await to_company(db, business)

@@ -14,10 +14,9 @@ No cookies, session, CSRF token, or captcha are required. Being undocumented,
 it can change or start requiring a captcha at any time without notice.
 
 Field mapping below is based on live response samples, not documentation.
-The endpoint does NOT return district/city/locality (only a region code) or
-average headcount ("Среднесписочная численность работников") - those are
-report/export-only columns not present in this JSON at all, in either
-inn-list or extended search mode.
+Average headcount ("Среднесписочная численность работников", od2_sschr) is
+only present for companies that reported it to ФНС: the key is missing both
+for zero and for "no data", so a missing key means "unknown".
 """
 
 from __future__ import annotations
@@ -61,6 +60,7 @@ class RmspRecord:
     phone: str | None
     email: str | None
     website: str | None  # "WWW"
+    employees_num: int | None  # "Среднесписочная численность работников" за прошлый год; None — нет данных
     has_licenses: bool  # "Наличие лицензий"
     is_hitech: bool  # "Производство инновационной, высокотехнологичной продукции"
     is_partnership: bool  # "Участие в программах партнерства"
@@ -83,8 +83,7 @@ class RmspRecord:
             phone=row.get("phone"),
             email=row.get("email"),
             website=row.get("www"),
-            employee_count=row.get("od2_sschr"),
-            svo_employee_count=row.get("od2_svo_sschr"),
+            employees_num=row.get("od2_sschr"),
             has_licenses=bool(row["has_licenses"]),
             is_hitech=bool(row["is_hitech"]),
             is_partnership=bool(row["is_partnership"]),

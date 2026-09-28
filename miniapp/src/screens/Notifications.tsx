@@ -34,6 +34,11 @@ export function Notifications() {
     if (data) setDraft(data);
   }, [data]);
 
+  // экран открыт — точка «есть новые» на колокольчике гаснет
+  useEffect(() => {
+    api.markNotificationsSeen().catch(() => undefined);
+  }, []);
+
   const set = <K extends keyof NotificationSettings>(key: K, value: NotificationSettings[K]) =>
     setDraft((d) => (d ? { ...d, [key]: value } : d));
 

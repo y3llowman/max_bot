@@ -89,7 +89,8 @@ def company_ctx(egrul: dict | None, msp: dict | None, inn: str) -> dict:
             "ogrn": (egrul or {}).get("ogrn") or (msp or {}).get("ogrn")}
 
 
-SOURCE_NAMES = {"egrul": "ЕГРЮЛ (ФНС)", "msp": "Единый реестр субъектов МСП (ФНС)"}
+SOURCE_NAMES = {"egrul": "ЕГРЮЛ (ФНС)", "msp": "Единый реестр субъектов МСП (ФНС)",
+                "erknm": "Единый реестр контрольных (надзорных) мероприятий"}
 
 
 def build_context(event_type: str, payload: dict, company: dict, today: date,
@@ -114,7 +115,7 @@ def render(template: str, ctx: dict) -> str:
 
 # ----------------------------------------------------------------- клавиатура и тело
 def keyboard(event_ids: list[int], source_url: str | None = None, docs: list | None = None,
-             app_id: int | None = None) -> dict:
+             app: dict | None = None) -> dict:
     ids = ",".join(map(str, event_ids))           # payload короткий: ev:<ids>:<action>
     rows = [[{"type": "callback", "text": "✅ Сделано", "payload": f"ev:{ids}:done"},
              {"type": "callback", "text": "⏰ Завтра", "payload": f"ev:{ids}:snooze1d"}],
@@ -123,8 +124,8 @@ def keyboard(event_ids: list[int], source_url: str | None = None, docs: list | N
     for d in docs or []:
         rows.insert(-1, [{"type": "callback", "text": f"📄 {d.button}", "payload": f"doc:{event_ids[0]}:{d.code}"}])
     link_row = []
-    if app_id:  # мини-приложение бота app_id; диплинк task_<id> открывает экран задачи
-        link_row.append({"type": "open_app", "text": "Открыть", "contact_id": app_id,
+    if app:  # app — bot.client.bot_app(): web_app и contact_id бота; диплинк task_<id> открывает экран задачи
+        link_row.append({"type": "open_app", "text": "Открыть", **app,
                          "payload": f"task_{event_ids[0]}"})
     if source_url:
         link_row.append({"type": "link", "text": "Источник", "url": source_url})
@@ -149,4 +150,5 @@ def question_body(text: str, flag: str) -> dict:
             "attachments": [{"type": "inline_keyboard", "payload": {"buttons": [row]}}]}
 
 
-SOURCE_URLS = {"egrul": "https://egrul.nalog.ru/", "msp": "https://rmsp.nalog.ru/"}
+SOURCE_URLS = {"egrul": "https://egrul.nalog.ru/", "msp": "https://rmsp.nalog.ru/",
+               "erknm": "https://proverki.gov.ru/portal/public-search"}

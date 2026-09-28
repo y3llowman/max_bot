@@ -79,6 +79,7 @@ _TYPES = [
               Severity.CRITICAL, Delivery.IMMEDIATE, kind="condition", repeat_days=3),
     EventType("inspection.planned", "Запланирована проверка",
               Severity.WARNING, Delivery.IMMEDIATE, remind_before=(30, 7, 1)),
+    EventType("inspection.warning", "Объявлено предостережение", Severity.WARNING, Delivery.IMMEDIATE),
     EventType("cert.expiring", "Истекает сертификат или декларация",
               Severity.WARNING, Delivery.IMMEDIATE, remind_before=(60, 30, 7)),
     # --- Календарь ---
@@ -91,4 +92,5 @@ _TYPES = [
 CATALOG: dict[str, EventType] = {t.code: t for t in _TYPES}
 
 # Что отправить, когда состояние исчезло (condition закрылся сам)
-ON_RESOLVE: dict[str, str] = {"egrul.unreliable": "egrul.unreliable_resolved"}
+ON_RESOLVE: dict[str, str] = {"egrul.unreliable": "egrul.unreliable_resolved",
+                               "egrul.director_disqualified": "egrul.disqualification_ended"}

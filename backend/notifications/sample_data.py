@@ -61,6 +61,7 @@ MSP = {
     "phone": None,
     "email": "MOSTAR.7@YANDEX.RU",
     "website": None,
+    "employees_num": None,
     "has_licenses": False,
     "is_hitech": False,
     "is_partnership": False,

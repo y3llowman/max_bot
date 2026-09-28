@@ -9,7 +9,7 @@ from app.api.schemas import Counters, DashboardData, Link, Task, TaskDetails, Ta
 from databases import get_db
 from databases.businesses_db import Business
 from databases.users_db import User
-from notifications.models import RadarEvent
+from notifications.models import Notification, RadarEvent
 from notifications.worker import send_document
 from radar.catalog import CATALOG
 from radar.render import cap1, plural
@@ -103,12 +103,18 @@ async def find_event(db: AsyncSession, business: Business, task_id: int) -> Rada
 @router.get("/dashboard", response_model=DashboardData, response_model_exclude_none=True)
 async def dashboard(
     business: Business = Depends(get_current_business),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     today = date.today()
     tasks = [to_task(event, today) for event in (await db.execute(company_events(business.inn))).scalars()]
     open_tasks = [task for task in tasks if task.status != "done"]
     week_end = today + timedelta(days=7)
+    # точка на колокольчике: бот что-то прислал в чат после последнего открытия экрана «Уведомления»
+    sent = select(Notification.id).where(Notification.user_id == user.id, Notification.status == "sent")
+    if user.notifications_seen_at is not None:
+        sent = sent.where(Notification.sent_at > user.notifications_seen_at)
+    unread = (await db.execute(sent.limit(1))).first() is not None
     return DashboardData(
         counters=Counters(
             overdue=sum(task.status == "overdue" for task in tasks),
@@ -118,7 +124,7 @@ async def dashboard(
         # группировку «Сегодня» / «На неделе» делает фронт
         tasks=open_tasks,
         next_due=next((task.due for task in open_tasks if task.due > week_end), None),
-        unread=False,  # прочитанность уведомлений пока не храним
+        unread=unread,
     )
 
 

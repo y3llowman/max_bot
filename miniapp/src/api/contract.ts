@@ -21,9 +21,12 @@ export interface Api {
   /** Задачи со сроком в интервале, включая выполненные. Даты YYYY-MM-DD. */
   calendar(from: string, to: string): Promise<Task[]>;
   company(): Promise<Company>;
+  /** Перечитать реестр МСП; выписку ЕГРЮЛ сервер проверит в фоне, находки придут в чат. */
   refreshCompany(): Promise<Company>;
   notifications(): Promise<NotificationSettings>;
   saveNotifications(settings: NotificationSettings): Promise<void>;
+  /** Экран «Уведомления» открыт — гасим точку на колокольчике. */
+  markNotificationsSeen(): Promise<void>;
   markSubmitted(id: string): Promise<void>;
   undoSubmitted(id: string): Promise<void>;
   /** Сформировать документ — бот пришлёт его в чат. */

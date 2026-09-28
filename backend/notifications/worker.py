@@ -3,12 +3,13 @@
 с несколькими воркерами.
 
 Расписание (Europe/Moscow):
-  03:00 ежедневно      sync_egrul        снимок ЕГРЮЛ (реквизиты для документов); детекторы пока пустые
+  03:00 ежедневно      sync_egrul        выписка ЕГРЮЛ: недостоверность, дисквалификация, ликвидация, смена руководителя/адреса/участников
   04:00 11-го числа    sync_msp          реестр МСП публикуется 10-го: исключение, смена категории
+  04:30 ежедневно      check_inspections ЕРКНМ: проверки и профвизиты по ИНН, предостережения
   05:00 ежедневно      materialize       сроки обязанностей на год вперёд по профилю компании
   09:00 ежедневно      queue_reminders   напоминания по настройкам пользователя, после срока — каждый день
   каждую минуту        dispatch          outbox (notifications) → MAX
-Заглушки, не реализованы: weekly_digest, check_banks, ingest_laws, fan_out_feed, check_inspections, check_certs.
+Заглушки, не реализованы: weekly_digest, check_banks, ingest_laws, fan_out_feed, check_certs.
 """
 from __future__ import annotations
 
@@ -25,12 +26,12 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from maxapi.types.input_media import InputMediaBuffer
-from sqlalchemy import delete, distinct, func, select, text, update
+from sqlalchemy import delete, distinct, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.client import bot, bot_id, send_html
-from data_fetching import egrul_client, rmsp_client
+from bot.client import bot, bot_app, send_html
+from data_fetching import egrul_client, erknm_client, rmsp_client
 from databases.businesses_db import Business, UserBusiness, current_business
 from databases.engine_start import SessionLocal
 from databases.users_db import User
@@ -102,8 +103,8 @@ async def open_condition_keys(inn: str, source: str) -> dict[str, str]:
         return dict(rows.all())
 
 
-async def close_conditions(inn: str, keys: list[str]) -> list[str]:
-    """resolved_at=now; вернуть закрытые ключи."""
+async def close_conditions(inn: str, keys: list[str]) -> list[RadarEvent]:
+    """resolved_at=now; вернуть закрытые события."""
     if not keys:
         return []
     async with SessionLocal() as db:
@@ -112,10 +113,11 @@ async def close_conditions(inn: str, keys: list[str]) -> list[str]:
             .where(RadarEvent.inn == inn, RadarEvent.kind == "condition", RadarEvent.key.in_(keys),
                    RadarEvent.resolved_at.is_(None))
             .values(resolved_at=func.now(), status="done")
-            .returning(RadarEvent.key)
+            .returning(RadarEvent)
         )
+        closed = list(result.scalars())
         await db.commit()
-        return list(result.scalars())
+        return closed
 
 
 async def alert(events: list[RadarEvent]) -> None:
@@ -135,10 +137,11 @@ async def process_egrul(inn: str, today: date) -> None:
     if cur is None:
         return
     prev = await save_snapshot(inn, "egrul", cur)
-    drafts = det.egrul_conditions(cur, today) + det.egrul_changes(prev, cur, today)
+    drafts = det.egrul_conditions(inn, cur, today) + det.egrul_changes(inn, prev, cur, today)
     new_events = await upsert_events(inn, "egrul", drafts)   # только реально новые
     gone = det.reconcile_conditions(await open_condition_keys(inn, "egrul"), drafts)
-    closed = await close_conditions(inn, gone)               # TODO: ON_RESOLVE → «отметка снята»
+    closed = await close_conditions(inn, gone)
+    new_events += await upsert_events(inn, "egrul", det.resolutions(closed, today))  # «отметка снята»
     await alert(new_events)
 
 
@@ -150,6 +153,31 @@ async def process_msp(inn: str, cur: dict | None, today: date) -> list[RadarEven
     await close_conditions(inn, det.reconcile_conditions(await open_condition_keys(inn, "msp"), drafts))
     await alert(new_events)
     return new_events
+
+
+async def process_inspections(inns: set[str], today: date) -> None:
+    """ЕРКНМ: месячные выгрузки скачиваем один раз на все ИНН (4 архива по несколько МБ)."""
+    knms: dict[str, list[dict]] = defaultdict(list)
+    for year, month in erknm_client.months_around(today):
+        try:
+            for knm in await asyncio.to_thread(erknm_client.fetch_month, year, month, inns):
+                knms[knm.inn].append(asdict(knm))
+        except Exception:  # без одного месяца остальные всё равно проверим
+            logger.exception("erknm %s-%s failed", year, month)
+    for inn in inns:
+        drafts, cancelled = det.inspection_events(inn, knms[inn], today)
+        await alert(await upsert_events(inn, "erknm", drafts))
+        if cancelled:  # отменённое мероприятие — не напоминаем и не показываем в задачах
+            async with SessionLocal() as db:
+                await db.execute(update(RadarEvent).where(RadarEvent.inn == inn, RadarEvent.key.in_(cancelled))
+                                 .values(status="muted"))
+                await db.commit()
+
+
+async def check_inspections() -> None:
+    inns = set(await active_inns())
+    if inns:
+        await process_inspections(inns, date.today())
 
 
 async def active_inns() -> list[str]:
@@ -190,16 +218,20 @@ async def sync_msp() -> None:
 
 # ---- обязанности ----------------------------------------------------------------
 async def load_profile(db: AsyncSession, inn: str) -> Profile | None:
+    """Профиль для правил, бота и мини-приложения. Численность: ответ пользователя (он мог поправить
+    её в /profile) важнее среднесписочной из реестра МСП; нет ни того, ни другого — бот спросит."""
     business = await db.get(Business, inn)
     if business is None:
         return None
     answers = await db.get(BusinessProfile, inn)
+    answered = answers.headcount if answers else None
+    headcount = answered if answered is not None else business.employees_num
     return Profile(
         inn=inn, is_legal_entity=business.subject_type == "UL", region_code=business.region_code,
         okved_main=business.main_activity_code, msp_category=business.category,
         tax_regime=answers.tax_regime if answers else None,
-        has_employees=answers.has_employees if answers else None,
-        headcount=answers.headcount if answers else None,
+        has_employees=headcount > 0 if headcount is not None else None,
+        headcount=headcount, headcount_exact=answered is None and headcount is not None,
     )
 
 
@@ -286,7 +318,9 @@ async def queue_reminders(now: datetime | None = None) -> None:
             select(RadarEvent, User)
             .join(UserBusiness, UserBusiness.inn == RadarEvent.inn)
             .join(User, User.id == UserBusiness.user_id)
-            .where(RadarEvent.due.is_not(None), RadarEvent.status == "open", User.is_active)
+            .where(RadarEvent.due.is_not(None), RadarEvent.status == "open", User.is_active,
+                   # о новом событии реестра сегодня уже ушёл alert — напоминания начинаются с завтра
+                   or_(RadarEvent.type == "deadline", RadarEvent.first_seen_at < datetime.combine(today, time(), MSK)))
         )
         for event, user in rows.all():
             label = reminder_label(event.due, today, NotificationSettings.of(user.notification_settings))
@@ -342,7 +376,7 @@ async def _send(db: AsyncSession, items: list[tuple[Notification, User, RadarEve
     docs = ([SimpleNamespace(button="Подготовить документ", code=event.payload["document"])]
             if len(events) == 1 and event.payload.get("document") else None)
     try:
-        kb = keyboard([e.id for e in events], SOURCE_URLS.get(event.source), docs, app_id=await bot_id())
+        kb = keyboard([e.id for e in events], SOURCE_URLS.get(event.source), docs, app=await bot_app())
         message_id = await send_html(user.max_user_id, render(first.template, ctx), kb)
     except Exception as exc:
         logger.exception("dispatch failed for user %s", user.id)
@@ -404,7 +438,8 @@ async def send_document(db: AsyncSession, event: RadarEvent, max_user_id: int) -
 # ---- демо-триггеры (/demo_remind, /demo_event в боте, только при DEBUG) ----------------
 # Открытого API ЕРКНМ по ИНН нет — на защите проверку показываем имитацией
 DEMO_INSPECTION = {
-    "authority": "Роспотребнадзор", "kind": "плановую выездную проверку", "form": "выездная проверка",
+    "classification": "КНМ", "type_name": "Плановое КНМ", "authority": "Роспотребнадзор",
+    "kind": "выездную проверку", "control": "Федеральный государственный санитарно-эпидемиологический контроль (надзор)",
     "title": "Плановая проверка Роспотребнадзора", "period": "Имитация записи ЕРКНМ",
     "why": "проверка внесена в единый реестр контрольных мероприятий по вашему ИНН",
     "what": "Изучите проверочные листы по вашему виду контроля и подготовьте документы до начала проверки.",
@@ -466,7 +501,6 @@ async def weekly_digest() -> None: ...
 async def check_banks() -> None: ...        # det.bank_conditions
 async def ingest_laws() -> None: ...        # law_ingest.run_daily
 async def fan_out_feed(feed_id: int) -> None: ...  # вызывается из callback feed:<id>:approve
-async def check_inspections() -> None: ...  # det.inspection_events
 async def check_certs() -> None: ...        # det.cert_events
 
 
@@ -480,6 +514,6 @@ def build_scheduler() -> AsyncIOScheduler:
     s.add_job(weekly_digest, CronTrigger(day_of_week="mon", hour=8, minute=55), id="digest")
     s.add_job(check_banks, CronTrigger(hour=6), id="banks", max_instances=1)
     s.add_job(ingest_laws, CronTrigger(hour=7), id="laws", max_instances=1)
-    s.add_job(check_inspections, CronTrigger(day_of_week="mon", hour=4, minute=30), id="knm")
+    s.add_job(check_inspections, CronTrigger(hour=4, minute=30), id="knm", max_instances=1)
     s.add_job(check_certs, CronTrigger(day_of_week="mon", hour=5, minute=30), id="fsa")
     return s
