@@ -18,7 +18,6 @@ import { useToast } from "../components/Toast";
 import { dateTime, dayMonth, diffDays, parseISO, today } from "../utils/dates";
 import { dashboardGroups } from "../utils/tasks";
 import { useAsync } from "../utils/useAsync";
-import { openChat } from "../max/bridge";
 import { useSession } from "../session";
 import s from "./Dashboard.module.css";
 
@@ -64,7 +63,7 @@ function DashboardContent({ data, stale, onScanned }: { data: DashboardData; sta
   return (
     <>
       {company?.needsAnswers && (
-        <Alert tone="info" title="Ответьте на вопросы в чате" action={{ label: "Открыть чат", onClick: openChat }}>
+        <Alert tone="info" title="Укажите режим и численность" action={{ label: "Указать", onClick: () => navigate("/profile/edit") }}>
           Режима налогообложения, а иногда и численности, нет в открытых реестрах. Без них часть обязанностей не видна.
         </Alert>
       )}
@@ -89,6 +88,11 @@ function DashboardContent({ data, stale, onScanned }: { data: DashboardData; sta
           ))}
         </>
       )}
+      {/* события без срока, взятые «В список дел» в чате или в приложении */}
+      {groups.undated.length > 0 && <SectionHeader title="Без срока" count={groups.undated.length} />}
+      {groups.undated.map((t) => (
+        <TaskCard key={t.id} task={t} />
+      ))}
     </>
   );
 }
@@ -97,7 +101,7 @@ function DashboardContent({ data, stale, onScanned }: { data: DashboardData; sta
 function DashboardEmpty({ data, onCalendar }: { data: DashboardData; onCalendar: () => void }) {
   const next = data.nextDue ? parseISO(data.nextDue) : null;
   const calm30 = !next || diffDays(next, today()) > 30;
-  const allDone = data.tasks.length === 0;
+  const allDone = data.tasks.every((t) => !t.due);
   return (
     <StateView
       tone="success"

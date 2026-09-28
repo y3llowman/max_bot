@@ -45,6 +45,8 @@ KBK = {
     "insurance": ("Страховые взносы", "18210201000011000160"),
     "usn_income": ("Аванс по УСН «доходы»", "18210501011011000110"),
     "usn_ie": ("Аванс по УСН «доходы минус расходы»", "18210501021011000110"),
+    # у НДФЛ ИП КБК зависит от суммы дохода (прогрессивная шкала, приказ Минфина № 70н) — не угадываем
+    "ndfl_ip": ("Аванс по НДФЛ ИП — КБК зависит от суммы дохода, сверьте в личном кабинете ИП", None),
 }
 
 BLANK = "________"
@@ -90,7 +92,7 @@ def _notice(doc: Document, payload: dict, due: date, req: dict) -> None:
                       "отправьте уведомление через оператора ЭДО или личный кабинет налогоплательщика.")
     _requisites_table(doc, req)
     doc.add_paragraph()
-    kinds = ["ndfl", "insurance"] if payload["code"] == "ndfl_notice" else [req["tax_regime"]]
+    kinds = {"ndfl_notice": ["ndfl", "insurance"], "ip_ndfl_notice": ["ndfl_ip"]}.get(payload["code"], [req["tax_regime"]])
     table = doc.add_table(rows=1, cols=4)
     table.style = "Table Grid"
     for cell, text in zip(table.rows[0].cells, ("Платёж", "КБК", "ОКТМО", "Сумма, ₽")):
@@ -98,7 +100,7 @@ def _notice(doc: Document, payload: dict, due: date, req: dict) -> None:
     for kind in kinds:
         label, kbk = KBK.get(kind, ("Налог", BLANK))
         cells = table.add_row().cells
-        cells[0].text, cells[1].text, cells[2].text, cells[3].text = label, kbk, BLANK, BLANK
+        cells[0].text, cells[1].text, cells[2].text, cells[3].text = label, kbk or BLANK, BLANK, BLANK
 
 
 def _quota_order(doc: Document, payload: dict, due: date, req: dict) -> None:
@@ -242,6 +244,10 @@ REPORTS: dict[str, Report] = {
         "ЕФС-1 (Социальный фонд России)", None, None,
         ("Начисленные и уплаченные взносы на травматизм за период.",
          "В январе — периоды работы и стаж каждого сотрудника за прошлый год.")),
+    "efs1_ausn": Report(
+        "ЕФС-1, подраздел 1.2 (стаж)", None, _year_only,
+        ("Периоды работы каждого сотрудника за прошлый год.",
+         "Условия работы: коды особых условий труда, если есть.")),
     "buh": Report(
         "Бухгалтерская (финансовая) отчётность", None, _year_only,
         ("Остатки по счетам на 31 декабря.",

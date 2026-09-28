@@ -73,7 +73,9 @@ Dockerfile шаблона бэкенда (`npm run prepare && npm run build`, к
 Демо-сценарии на моках:
 - ИНН с правильной контрольной суммой, например `7701234560`, — подключение;
 - `0000000000` — «Не нашли компанию с таким ИНН»;
-- на задаче «Декларация по НДС» — «Уже подано» → тост с отменой → через 5 секунд «Готово».
+- на задаче «Декларация по НДС» — «Выполнено» → главная и тост с «Отменить»;
+- колокольчик → лента; акт «№ 400-ФЗ» в ней — без срока: «В список дел» → раздел «Без срока» на главной;
+- Профиль → «Данные компании» → «Сохранить» → главная.
 
 ## Экраны
 
@@ -85,7 +87,9 @@ Dockerfile шаблона бэкенда (`npm run prepare && npm run build`, к
 | 04, E4, E5, S4, S5 Задача | `#/task/:id` | `screens/Task.tsx` |
 | 05, E2, E3, S6 Календарь | `#/calendar?view=week\|month\|list` | `screens/Calendar.tsx` |
 | 06 Профиль | `#/profile` | `screens/Profile.tsx` |
-| 07 Уведомления | `#/notifications` | `screens/Notifications.tsx` |
+| 07 Уведомления (настройки) | `#/notifications` | `screens/Notifications.tsx` |
+| Лента (колокольчик) — о чём писал бот | `#/feed` | `screens/Feed.tsx` |
+| Данные компании — поправить найденное в реестрах | `#/profile/edit` | `screens/ProfileEdit.tsx` |
 | 08 Чат с ботом | — | интерфейс самого MAX, это спецификация сообщений бота |
 
 Компоненты в `src/components/` названы как слои у дизайнера: `TaskCard`, `StatusTiles`,
@@ -98,8 +102,9 @@ Payload — до 512 символов, только `[A-Za-z0-9_-]` (огран�
 
 | Payload | Куда |
 |---|---|
-| `task_<id>` | Задача — так открывать из уведомления о сроке |
-| `calendar`, `notifications`, `profile` | Разделы |
+| `task_<id>` | Экран события — кнопка «Открыть» под пушем |
+| `profile_edit` | «Данные компании» — карточка «Нашли вашу компанию» и `/profile` в боте |
+| `calendar`, `notifications`, `profile`, `feed` | Разделы |
 
 Поэтому id задач на бэкенде — только латиница, цифры, `_` и `-`.
 
@@ -117,18 +122,21 @@ Payload — до 512 символов, только `[A-Za-z0-9_-]` (огран�
 | Метод | Путь | Ответ |
 |---|---|---|
 | GET | `/session` | `Company`; 404 — компания не подключена |
-| POST | `/session` `{ inn }` | `Company`; 404 — ИНН не найден в реестре |
+| POST | `/session` `{ inn }` | `Company`; 404 — ИНН не найден в реестре; 409 — компанию подключил другой пользователь; 503 — реестр не ответил |
 | GET | `/dashboard` | `DashboardData` |
-| GET | `/tasks/:id` | `TaskDetails`; 404 — задачи нет |
-| GET | `/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD` | `Task[]`, включая выполненные |
+| GET | `/tasks/:id` | `TaskDetails` любого события компании (и без срока); 404 — нет |
+| GET | `/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD` | `DatedTask[]`, включая выполненные |
+| GET | `/feed` | `FeedItem[]` — о чём бот писал в чат за 90 дней |
 | GET | `/company` | `Company` |
 | POST | `/company/refresh` | `Company` — перечитать реестр МСП; выписку ЕГРЮЛ сервер проверит в фоне |
+| GET / PUT | `/company/profile` | `ProfileForm` / `ProfileUpdate` → `Company`; 422 — неверный ОКВЭД, регион, режим или срок патента |
 | GET / PUT | `/settings/notifications` | `NotificationSettings` |
-| POST | `/settings/notifications/seen` | 204 — экран «Уведомления» открыт, `unread` на дашборде гаснет |
-| POST / DELETE | `/tasks/:id/submitted` | 204 — «Уже подано» и его отмена |
+| POST | `/settings/notifications/seen` | 204 — лента открыта, `unread` на дашборде гаснет |
+| POST / DELETE | `/tasks/:id/submitted` | 204 — «Выполнено» и его отмена; пуш о задаче уходит из чата |
+| POST | `/tasks/:id/list` | 204 — «В список дел»: событие без срока попадает на главную |
 | POST | `/tasks/:id/document` | 204 — сформировать документ, бот пришлёт его в чат |
 
-Группировку «Сегодня / На неделе» и подписи сроков («был 20 июля», «до 27 июля»)
+Группировку «Сегодня / На неделе / Без срока» и подписи сроков («был 20 июля», «до 27 июля»)
 делает клиент — бэкенд отдаёт только даты и статус (`overdue` / `soon` / `planned` / `done`).
 
 ## MAX Bridge

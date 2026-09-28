@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 
 REGIME_RU = {
     "osno": "ОСНО",
@@ -127,6 +128,8 @@ class Profile:
     headcount: int | None = None     # точное число из реестра или нижняя граница диапазона из HEADCOUNT_RU
     headcount_exact: bool = False    # True — среднесписочная из реестра МСП
     has_licenses: bool = False       # признак лицензий из реестра МСП
+    patent_from: date | None = None  # срок патента (ПСН) — из профиля в мини-приложении
+    patent_to: date | None = None
     flags: dict[str, bool] = field(default_factory=dict)   # ответы «да/нет» на вопросы radar.laws.FLAGS
 
     def headcount_benefits(self) -> list[HeadcountBenefit]:

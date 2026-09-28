@@ -4,7 +4,7 @@ import { useSession } from "../session";
 import { Icon } from "./Icon";
 import s from "./ContextBar.module.css";
 
-/** Context Bar — компания, уведомления и «В чат MAX». По киту: только на экранах верхнего уровня. */
+/** Context Bar — компания, лента (колокольчик) и «В чат MAX». По киту: только на экранах верхнего уровня. */
 export function ContextBar({ unread = false }: { unread?: boolean }) {
   const navigate = useNavigate();
   const { company } = useSession();
@@ -18,8 +18,8 @@ export function ContextBar({ unread = false }: { unread?: boolean }) {
       <button
         type="button"
         className={s.bell}
-        onClick={() => navigate("/notifications")}
-        aria-label={unread ? "Уведомления, есть новые" : "Уведомления"}
+        onClick={() => navigate("/feed")}
+        aria-label={unread ? "Лента, есть новые" : "Лента"}
       >
         <Icon name="bell" size={24} />
         {unread && <span className={s.unread} aria-hidden="true" />}

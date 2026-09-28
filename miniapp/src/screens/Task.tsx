@@ -23,46 +23,59 @@ const TITLE = "Задача";
 /** 04 · Детали задачи, E5 · Результат действия, E4 · Задача выполнена, S4 · загрузка, S5 · ошибка. */
 export function TaskScreen() {
   const { id = "" } = useParams();
-  const { data: task, error, loading, reload, setData } = useAsync(() => api.task(id), [id]);
+  const { data: task, error, loading, reload } = useAsync(() => api.task(id), [id]);
 
   if (loading) return <TaskLoading />;
   if (error || !task) return <TaskError error={error} onRetry={reload} />;
   if (task.status === "done") return <TaskDone task={task} />;
-  return <TaskOpen task={task} onDone={() => setData({ ...task, status: "done" })} />;
+  return <TaskOpen task={task} />;
 }
 
-function TaskOpen({ task, onDone }: { task: TaskDetails; onDone: () => void }) {
-  const [submitted, setSubmitted] = useState(false);
+function TaskOpen({ task }: { task: TaskDetails }) {
+  const [busy, setBusy] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const navigate = useNavigate();
   const toast = useToast();
 
-  useEffect(() => setSubmitted(false), [task.id]);
+  useEffect(() => setBusy(false), [task.id]);
 
-  // По заметке дизайнера: после «Уже подано» — уведомление о результате с отменой; тупиков нет.
-  // Не отменили за 5 секунд — задача выполнена, показываем E4.
+  // Действие закрывает экран — возвращаемся на главную; уведомление о результате с отменой.
+  // Пуш об этой задаче сервер убирает из чата.
   const markSubmitted = async () => {
-    setSubmitted(true);
+    setBusy(true);
     try {
       await api.markSubmitted(task.id);
     } catch {
-      setSubmitted(false);
+      setBusy(false);
       toast({ text: "Не получилось отметить — попробуйте ещё раз", icon: "alert-circle" });
       return;
     }
     haptic.success();
+    navigate("/tasks");
     toast({
       text: task.submittedNote ?? "Отмечено как выполненное",
       action: {
         label: "Отменить",
-        onClick: () => {
-          setSubmitted(false);
+        onClick: () =>
           api.undoSubmitted(task.id).catch(() =>
             toast({ text: "Не получилось отменить — попробуйте ещё раз", icon: "alert-circle" }),
-          );
-        },
+          ),
       },
-      onTimeout: onDone,
     });
+  };
+
+  const addToList = async () => {
+    setBusy(true);
+    try {
+      await api.addToList(task.id);
+    } catch {
+      setBusy(false);
+      toast({ text: "Не получилось добавить — попробуйте ещё раз", icon: "alert-circle" });
+      return;
+    }
+    haptic.success();
+    navigate("/tasks");
+    toast({ text: "Добавили в список дел — раздел «Без срока»" });
   };
 
   const generate = async () => {
@@ -86,7 +99,7 @@ function TaskOpen({ task, onDone }: { task: TaskDetails; onDone: () => void }) {
       bottom={
         <ActionBar>
           <ActionRow>
-            <Button variant="outline" disabled={submitted} onClick={markSubmitted}>
+            <Button variant="outline" disabled={busy} onClick={markSubmitted}>
               Выполнено
             </Button>
             {task.document && (
@@ -94,14 +107,19 @@ function TaskOpen({ task, onDone }: { task: TaskDetails; onDone: () => void }) {
                 Подготовить документ
               </Button>
             )}
+            {!task.due && !task.listed && (
+              <Button disabled={busy} onClick={addToList}>
+                В список дел
+              </Button>
+            )}
           </ActionRow>
         </ActionBar>
       }
     >
       <div className={s.status}>
-        <StatusChip status={task.status} />
+        {task.due ? <StatusChip status={task.status} /> : <Chip tone="info">{task.listed ? "В списке дел" : "Без срока"}</Chip>}
         {task.periodicity && <Chip tone="neutral">{task.periodicity}</Chip>}
-        <span className="t-note-strong c-secondary">{timeLeft(parseISO(task.due))}</span>
+        {task.due && <span className="t-note-strong c-secondary">{timeLeft(parseISO(task.due))}</span>}
       </div>
       <div className={s.title}>
         <span className={s.icon}>

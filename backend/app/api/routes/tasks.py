@@ -1,34 +1,39 @@
-from datetime import date, timedelta
+import re
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.depends import get_current_business, get_current_user
-from app.api.schemas import Counters, DashboardData, Link, Task, TaskDetails, TaskSection
+from app.api.schemas import Counters, DashboardData, FeedItem, Link, Task, TaskDetails, TaskSection
 from databases import get_db
 from databases.businesses_db import Business
 from databases.users_db import User
 from notifications.models import Notification, RadarEvent
-from notifications.worker import send_document
+from notifications.planner import today_msk
+from notifications.worker import handled_in_app, send_document
 from radar.catalog import CATALOG
-from radar.render import cap1, plural
+from radar.obligations import BY_CODE
+from radar.render import SOURCE_URLS, build_context, cap1, company_ctx, plural, render
 
 router = APIRouter(tags=["tasks"])
 
 
-def company_events(inn: str) -> Select:
-    """Задачи — события радара со сроком; отмеченные «Не актуально» (muted) не показываем."""
+def company_tasks(inn: str) -> Select:
+    """Задачи — события со сроком и взятые «В список дел»; отмеченные «Не актуально» (muted) не показываем."""
     return (
         select(RadarEvent)
-        .where(RadarEvent.inn == inn, RadarEvent.due.is_not(None), RadarEvent.status != "muted")
-        .order_by(RadarEvent.due, RadarEvent.id)
+        .where(RadarEvent.inn == inn, or_(RadarEvent.due.is_not(None), RadarEvent.in_list), RadarEvent.status != "muted")
+        .order_by(RadarEvent.due.nulls_last(), RadarEvent.id)
     )
 
 
 def task_status(event: RadarEvent, today: date) -> str:
     if event.status == "done":
         return "done"
+    if event.due is None:
+        return "planned"
     days_left = (event.due - today).days
     if days_left < 0:
         return "overdue"
@@ -52,9 +57,9 @@ def to_task(event: RadarEvent, today: date) -> Task:
 
 
 def to_sections(payload: dict) -> list[TaskSection]:
-    """Разделы экрана задачи из payload события радара. Обязанности (radar/obligations.py) дают
-    what, how, where, format, basis, penalty, why; новые законы (radar/laws.drafts) —
-    summary, actions, reasons, act, basis_url. id разделов — как в макете: why и risks фронт раскрывает сразу."""
+    """Разделы экрана задачи из payload: обязанности (radar/obligations.py) дают what, how, where, format,
+    basis, penalty, why; новые законы (radar/laws.drafts) — summary, actions, reasons, act, basis_url.
+    id разделов — как в макете: why и risks фронт раскрывает сразу."""
     def lines(*keys: str) -> list[str] | None:
         value = next((payload[key] for key in keys if payload.get(key)), None)
         if value is None:
@@ -85,6 +90,43 @@ def to_sections(payload: dict) -> list[TaskSection]:
     return [section for section in sections if section.body or section.steps]
 
 
+# заголовок раздела полного сообщения → (id, иконка, подпись); why и risks фронт раскрывает сразу
+TEMPLATE_SECTIONS = {
+    "Что произошло": ("why", "info", "Факт из реестра"),
+    "Что вышло": ("why", "info", "Акт и даты"),
+    "Что это значит": ("risks", "alert-triangle", "Последствия"),
+    "Чем грозит": ("risks", "alert-triangle", "Последствия"),
+    "Почему вам": ("reason", "user", "По данным профиля"),
+    "Что сделать": ("steps", "tasks", "Рекомендация бота"),
+    "Ваши права": ("law", "scale", "Закон № 248-ФЗ"),
+}
+
+
+def template_sections(event: RadarEvent, company: dict, today: date) -> list[TaskSection]:
+    """События реестров: разделы — из полного шаблона сообщения (radar/templates.py). В чат уходит
+    короткий пуш, а весь текст с «что это значит» и «что сделать» — здесь."""
+    text = render(event.type, build_context(event.type, event.payload, company, today, src=event.source))
+    sections: list[TaskSection] = []
+    title, body = "Что произошло", []
+
+    def flush() -> None:
+        if body:
+            section_id, icon, caption = TEMPLATE_SECTIONS.get(title, (f"s{len(sections)}", "info", ""))
+            sections.append(TaskSection(id=section_id, icon=icon, title=title, caption=caption, body=list(body)))
+
+    for line in text.splitlines()[2:]:  # шапка — заголовок и компания — уже есть на экране
+        heading = re.fullmatch(r"<b>(.+)</b>", line.strip())
+        if heading:
+            flush()
+            title, body = heading.group(1), []
+        elif plain := re.sub(r"<[^>]+>", "", line).strip():
+            body.append(plain)
+    flush()
+    if sections and event.source in SOURCE_URLS:
+        sections[0].link = Link(label="Открыть источник", url=SOURCE_URLS[event.source])
+    return sections
+
+
 def heading(title: str, period: str | None) -> str:
     """«Декларация по УСН» + «За 2025 год» → «Декларация по УСН за 2025 год»."""
     if not period:
@@ -93,8 +135,8 @@ def heading(title: str, period: str | None) -> str:
 
 
 async def find_event(db: AsyncSession, business: Business, task_id: int) -> RadarEvent:
-    result = await db.execute(company_events(business.inn).where(RadarEvent.id == task_id))
-    event = result.scalar_one_or_none()
+    """Любое событие компании: и задача, и то, о чём бот прислал пуш («Открыть» ведёт сюда)."""
+    event = await db.scalar(select(RadarEvent).where(RadarEvent.inn == business.inn, RadarEvent.id == task_id))
     if event is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return event
@@ -106,11 +148,11 @@ async def dashboard(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    today = date.today()
-    tasks = [to_task(event, today) for event in (await db.execute(company_events(business.inn))).scalars()]
+    today = today_msk()
+    tasks = [to_task(event, today) for event in (await db.execute(company_tasks(business.inn))).scalars()]
     open_tasks = [task for task in tasks if task.status != "done"]
     week_end = today + timedelta(days=7)
-    # точка на колокольчике: бот что-то прислал в чат после последнего открытия экрана «Уведомления»
+    # точка на колокольчике: бот что-то прислал в чат после последнего открытия ленты
     sent = select(Notification.id).where(Notification.user_id == user.id, Notification.status == "sent")
     if user.notifications_seen_at is not None:
         sent = sent.where(Notification.sent_at > user.notifications_seen_at)
@@ -121,9 +163,9 @@ async def dashboard(
             soon=sum(task.status == "soon" for task in tasks),
             done=sum(task.status == "done" for task in tasks),
         ),
-        # группировку «Сегодня» / «На неделе» делает фронт
+        # группировку «Сегодня» / «На неделе» / «Без срока» делает фронт
         tasks=open_tasks,
-        next_due=next((task.due for task in open_tasks if task.due > week_end), None),
+        next_due=next((task.due for task in open_tasks if task.due and task.due > week_end), None),
         unread=unread,
     )
 
@@ -135,9 +177,37 @@ async def calendar(
     business: Business = Depends(get_current_business),
     db: AsyncSession = Depends(get_db),
 ):
-    today = date.today()
-    query = company_events(business.inn).where(RadarEvent.due.between(from_, to))
+    today = today_msk()
+    query = company_tasks(business.inn).where(RadarEvent.due.between(from_, to))
     return [to_task(event, today) for event in (await db.execute(query)).scalars()]
+
+
+@router.get("/feed", response_model=list[FeedItem], response_model_exclude_none=True)
+async def feed(
+    business: Business = Depends(get_current_business),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Лента: о чём бот писал в чат за 90 дней, свежее сверху. Пуши в чате удаляются после ответа —
+    история остаётся здесь."""
+    since = datetime.now(timezone.utc) - timedelta(days=90)
+    last_sent = func.max(Notification.sent_at)
+    rows = await db.execute(
+        select(RadarEvent, last_sent)
+        .join(Notification, Notification.event_id == RadarEvent.id)
+        .where(Notification.user_id == user.id, Notification.status == "sent", Notification.sent_at >= since,
+               RadarEvent.inn == business.inn)
+        .group_by(RadarEvent.id).order_by(last_sent.desc()).limit(100)
+    )
+    today = today_msk()
+    items = []
+    for event, sent_at in rows.all():
+        task = to_task(event, today)
+        severity = CATALOG[event.type].severity.value if event.type in CATALOG else "info"
+        items.append(FeedItem(id=task.id, title=task.title, subtitle=task.subtitle, sent_at=sent_at, due=event.due,
+                              status=event.status if event.status in ("done", "muted") else "open",
+                              listed=event.in_list, severity=severity))
+    return items
 
 
 @router.get("/tasks/{task_id}", response_model=TaskDetails, response_model_exclude_none=True)
@@ -146,21 +216,28 @@ async def task_details(
     business: Business = Depends(get_current_business),
     db: AsyncSession = Depends(get_db),
 ):
-    today = date.today()
+    today = today_msk()
     event = await find_event(db, business, task_id)
     task = to_task(event, today)
+    if event.type == "law.upcoming" or event.payload.get("code") in BY_CODE:
+        sections = to_sections(event.payload)
+    else:
+        company = company_ctx(None, {"name": business.name, "ogrn": business.ogrn}, business.inn)
+        sections = template_sections(event, company, today)
     # следующий открытый срок — карточка на экране выполненной задачи
-    result = await db.execute(
-        company_events(business.inn)
-        .where(RadarEvent.id != event.id, RadarEvent.due >= event.due, RadarEvent.status != "done")
-        .limit(1)
-    )
-    next_event = result.scalar_one_or_none()
+    next_event = None
+    if event.due is not None:
+        next_event = await db.scalar(
+            company_tasks(business.inn)
+            .where(RadarEvent.id != event.id, RadarEvent.due >= event.due, RadarEvent.status != "done")
+            .limit(1)
+        )
     return TaskDetails(
         **task.model_dump(),
         heading=heading(task.title, event.payload.get("period")),
-        sections=to_sections(event.payload),
+        sections=sections,
         document=bool(event.payload.get("document")),
+        listed=event.in_list,
         next=to_task(next_event, today) if next_event else None,
     )
 
@@ -169,11 +246,13 @@ async def task_details(
 async def mark_submitted(
     task_id: int,
     business: Business = Depends(get_current_business),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     event = await find_event(db, business, task_id)
     event.status = "done"
     await db.commit()
+    await handled_in_app(user.max_user_id, event.id)  # пуш о закрытой задаче уходит из чата
 
 
 @router.delete("/tasks/{task_id}/submitted", status_code=204)
@@ -185,6 +264,20 @@ async def undo_submitted(
     event = await find_event(db, business, task_id)
     event.status = "open"
     await db.commit()
+
+
+@router.post("/tasks/{task_id}/list", status_code=204)
+async def add_to_list(
+    task_id: int,
+    business: Business = Depends(get_current_business),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """«В список дел» на экране события — как одноимённая кнопка в чате."""
+    event = await find_event(db, business, task_id)
+    event.in_list = True
+    await db.commit()
+    await handled_in_app(user.max_user_id, event.id)
 
 
 @router.post("/tasks/{task_id}/document", status_code=204)

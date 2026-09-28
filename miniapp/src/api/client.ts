@@ -59,6 +59,8 @@ async function request<T>(method: string, path: string, body?: unknown, retry = 
   }
   if (res.status === 401) throw new ApiError("unauthorized", "Сессия не подтверждена");
   if (res.status === 404) throw new ApiError("not_found", "Не найдено");
+  if (res.status === 409) throw new ApiError("conflict", "Компанию уже подключил другой пользователь");
+  if (res.status === 422) throw new ApiError("invalid", "Проверьте данные");
   if (res.status === 503) throw new ApiError("unavailable", "Реестр ФНС не отвечает");
   if (!res.ok) throw new ApiError("server", `Ошибка сервера ${res.status}`);
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
@@ -79,6 +81,10 @@ const httpApi: Api = {
   notifications: () => request("GET", "/settings/notifications"),
   saveNotifications: (s) => request("PUT", "/settings/notifications", s),
   markNotificationsSeen: () => request("POST", "/settings/notifications/seen"),
+  feed: () => request("GET", "/feed"),
+  profileForm: () => request("GET", "/company/profile"),
+  saveProfile: (update) => request("PUT", "/company/profile", update),
+  addToList: (id) => request("POST", `/tasks/${encodeURIComponent(id)}/list`),
   markSubmitted: (id) => request("POST", `/tasks/${encodeURIComponent(id)}/submitted`),
   undoSubmitted: (id) => request("DELETE", `/tasks/${encodeURIComponent(id)}/submitted`),
   generateDocument: (id) => request("POST", `/tasks/${encodeURIComponent(id)}/document`),

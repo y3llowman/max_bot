@@ -162,6 +162,30 @@ def enp_schedule(p: Profile, year: int) -> list[tuple[date, str]]:
     return [(date(year, month, 28), f"{MONTHS_NOM[month - 1].capitalize()} {year}") for month in range(1, 13)]
 
 
+def ip_ndfl_notice_schedule(p: Profile, year: int) -> list[tuple[date, str]]:
+    return [(date(year, month, 25), f"{label} {year}") for month, label in USN_ADVANCES]
+
+
+def ip_ndfl_pay_schedule(p: Profile, year: int) -> list[tuple[date, str]]:
+    """Авансы — до 28-го числа после квартала, налог за год — до 15 июля (п. 6 и 8 ст. 227 НК РФ)."""
+    out = [(date(year, month, 28), f"{label} {year}") for month, label in USN_ADVANCES]
+    return out + [(date(year, 7, 15), f"Налог за {year - 1} год")]
+
+
+def patent_schedule(p: Profile, year: int) -> list[tuple[date, str]]:
+    """п. 2 ст. 346.51 НК РФ: патент до 6 месяцев — вся сумма до конца срока; от 6 месяцев — треть
+    в течение 90 дней от начала, остальное до конца срока. Кончается 31 декабря — платить до 28 декабря."""
+    if not (p.patent_from and p.patent_to):
+        return []
+    start, end = p.patent_from, p.patent_to
+    last = date(end.year, 12, 28) if (end.month, end.day) == (12, 31) else end
+    months = (end.year - start.year) * 12 + end.month - start.month + 1
+    term = f"Патент {start:%d.%m.%Y}–{end:%d.%m.%Y}"
+    payments = ([(last, f"{term}: вся сумма")] if months <= 6
+                else [(start + timedelta(days=89), f"{term}: треть суммы"), (last, f"{term}: остальные две трети")])
+    return [(d, label) for d, label in payments if d.year == year]
+
+
 def ip_contrib_schedule(p: Profile, year: int) -> list[tuple[date, str]]:
     return [(date(year, 7, 1), f"1% с дохода свыше 300 000 ₽ за {year - 1} год"),
             (date(year, 12, 28), f"Фиксированные взносы за {year} год")]
@@ -175,7 +199,28 @@ def on_usn(p: Profile) -> str | None:
 
 
 def has_staff(p: Profile) -> str | None:
-    return "у вас есть сотрудники — вы налоговый агент и страхователь" if p.has_employees else None
+    """Отчётность работодателя. На АУСН её нет: НДФЛ за сотрудников по умолчанию считает и платит банк,
+    взносы (кроме травматизма) не платятся, РСВ, 6-НДФЛ и персонифицированные сведения не сдаются
+    (закон № 17-ФЗ) — остаётся только стаж в ЕФС-1 (efs1_ausn)."""
+    if not p.has_employees or p.tax_regime == "ausn":
+        return None
+    return "у вас есть сотрудники — вы налоговый агент и страхователь"
+
+
+def ausn_employer(p: Profile) -> str | None:
+    if p.has_employees and p.tax_regime == "ausn":
+        return "у вас есть сотрудники: сведения о стаже в Соцфонд сдают и на АУСН"
+    return None
+
+
+def ausn(p: Profile) -> str | None:
+    return "вы на АУСН: налог считает ФНС, а заплатить его нужно самим" if p.tax_regime == "ausn" else None
+
+
+def patent(p: Profile) -> str | None:
+    if p.tax_regime == "psn" and p.patent_from and p.patent_to:
+        return f"у вас патент на {p.patent_from:%d.%m.%Y}–{p.patent_to:%d.%m.%Y}"
+    return None
 
 
 def legal_entity(p: Profile) -> str | None:
@@ -202,6 +247,8 @@ def ip_not_ausn(p: Profile) -> str | None:
 
 
 def monthly_payments(p: Profile) -> str | None:
+    if p.tax_regime == "ausn":
+        return None  # налог АУСН — отдельной обязанностью ausn_pay, НДФЛ сотрудников платит банк
     if p.has_employees:
         return "у вас есть сотрудники: НДФЛ и взносы платят каждый месяц"
     if p.tax_regime == "osno":
@@ -328,6 +375,31 @@ OBLIGATIONS: tuple[Obligation, ...] = (
         document="report_brief",
     ),
     Obligation(
+        code="efs1_ausn", title="ЕФС-1: стаж сотрудников",
+        what="Сдайте подраздел 1.2 формы ЕФС-1 о стаже работников за прошлый год — на АУСН это остаётся за вами.",
+        how=("Сверьте периоды работы каждого сотрудника за год.",
+             "Нажмите «Подготовить документ» — пришлём памятку: что подготовить.",
+             "Отправьте форму в Социальный фонд. О приёме и увольнении (подраздел 1.1) сообщайте, как и раньше, "
+             "на следующий рабочий день."),
+        where="Социальный фонд России", where_url="https://sfr.gov.ru/",
+        format="Электронно через оператора ЭДО или кабинет страхователя; при 10 работниках и меньше — можно на бумаге",
+        basis="ст. 11 закона № 27-ФЗ", basis_url=None,
+        penalty="500 ₽ за каждого работника, по которому не сданы сведения (ст. 17 закона № 27-ФЗ).",
+        periodicity="Раз в год", applies=ausn_employer, schedule=yearly(1, 25), document="report_brief",
+    ),
+    Obligation(
+        code="ausn_pay", title="Уплата налога по АУСН",
+        what="Заплатите налог по АУСН за прошлый месяц: ФНС сама считает его по данным банка и до 15-го числа "
+             "присылает сумму в личный кабинет.",
+        how=("Проверьте сумму в личном кабинете налогоплательщика или в банке.",
+             "Нажмите «Подготовить документ» — пришлём реквизиты платёжки на ЕНП.",
+             "Заплатите единым налоговым платежом до 25-го числа."),
+        where="Банк — платёж на единый налоговый счёт", where_url="https://ausn.nalog.gov.ru/",
+        format="Платёжное поручение или согласие на списание в банке",
+        basis="закон № 17-ФЗ об АУСН", basis_url=None, penalty=PENALTY_LATE_PAYMENT,
+        periodicity="Ежемесячно", applies=ausn, schedule=monthly(25), document="enp_payment",
+    ),
+    Obligation(
         code="quota", title="Сведения о выполнении квоты для инвалидов",
         what="Сообщите в службу занятости, как выполнена квота для приёма инвалидов за прошлый месяц.",
         how=("Уточните размер квоты в законе вашего региона: от 2 до 4% среднесписочной численности.",
@@ -389,6 +461,40 @@ OBLIGATIONS: tuple[Obligation, ...] = (
         basis="ст. 229 НК РФ", basis_url=NK2, penalty=PENALTY_119, periodicity="Раз в год",
         applies=osno_ip, schedule=yearly(4, 30),
         document="report_brief",
+    ),
+    Obligation(
+        code="ip_ndfl_notice", title="Уведомление об авансе по НДФЛ (ИП)",
+        what="Сообщите налоговой сумму аванса по НДФЛ с доходов от бизнеса, чтобы она списала его с единого "
+             "налогового счёта.",
+        how=("Посчитайте аванс нарастающим итогом с начала года по прогрессивной шкале.",
+             "Нажмите «Подготовить документ» — пришлём черновик с реквизитами.",
+             "Сверьте КБК в личном кабинете ИП: он зависит от суммы дохода.",
+             "Впишите сумму и отправьте уведомление."),
+        where="ФНС по месту учёта", where_url=FNS, format=FNS_EDO,
+        basis="п. 9 ст. 58 и п. 8 ст. 227 НК РФ", basis_url=NK1, penalty=PENALTY_NOTICE, periodicity="Ежеквартально",
+        applies=osno_ip, schedule=ip_ndfl_notice_schedule, document="notice",
+    ),
+    Obligation(
+        code="ip_ndfl_pay", title="Уплата НДФЛ ИП",
+        what="Пополните единый налоговый счёт на сумму аванса по НДФЛ или налога за прошлый год.",
+        how=("Проверьте сумму в уведомлении или декларации 3-НДФЛ.",
+             "Нажмите «Подготовить документ» — пришлём реквизиты платёжки на ЕНП.",
+             "Заплатите единым налоговым платежом."),
+        where="Банк — платёж на единый налоговый счёт", where_url=FNS, format="Платёжное поручение",
+        basis="п. 6 и 8 ст. 227 НК РФ", basis_url=NK2, penalty=PENALTY_LATE_PAYMENT, periodicity="Ежеквартально",
+        applies=osno_ip, schedule=ip_ndfl_pay_schedule, document="enp_payment",
+    ),
+    Obligation(
+        code="patent_pay", title="Оплата патента",
+        what="Заплатите за патент: до 6 месяцев — всю сумму до конца срока, дольше — треть в первые 90 дней, "
+             "остальное до конца срока.",
+        how=("Проверьте сумму в патенте или личном кабинете ИП.",
+             "Нажмите «Подготовить документ» — пришлём реквизиты платёжки на ЕНП.",
+             "Заплатите единым налоговым платежом."),
+        where="Банк — платёж на единый налоговый счёт", where_url="https://www.nalog.gov.ru/rn77/taxation/taxes/patent/",
+        format="Платёжное поручение", basis="п. 2 ст. 346.51 НК РФ", basis_url=NK2,
+        penalty=PENALTY_LATE_PAYMENT + " Неуплата в срок — утрата права на патент (п. 6 ст. 346.45 НК РФ).",
+        periodicity="По сроку патента", applies=patent, schedule=patent_schedule, document="enp_payment",
     ),
     Obligation(
         code="ip_contrib", title="Страховые взносы ИП «за себя»",

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
-import type { Task } from "../api/types";
+import type { DatedTask } from "../api/types";
 import { Button } from "../components/Button";
 import { MonthGrid, WeekStrip, monthGridStart, monthWeeks } from "../components/Calendar";
 import { Screen } from "../components/Screen";
@@ -174,7 +174,7 @@ function ListView() {
   const open = (data ?? []).filter((t) => t.status !== "done").sort(byDue);
   const nextMonday = addDays(startOfWeek(now), 7);
   const afterNext = addDays(nextMonday, 7);
-  const groups: [string, Task[]][] = [
+  const groups: [string, DatedTask[]][] = [
     ["Эта неделя", open.filter((t) => parseISO(t.due) < nextMonday)],
     ["Следующая неделя", open.filter((t) => parseISO(t.due) >= nextMonday && parseISO(t.due) < afterNext)],
     ["Позже", open.filter((t) => parseISO(t.due) >= afterNext)],

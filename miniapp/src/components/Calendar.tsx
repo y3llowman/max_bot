@@ -1,4 +1,4 @@
-import type { Task, TaskStatus } from "../api/types";
+import type { DatedTask, TaskStatus } from "../api/types";
 import { addDays, sameDay, toISO, weekdayShort, WEEKDAYS } from "../utils/dates";
 import { dayDots } from "../utils/tasks";
 import { IconButton } from "./Button";
@@ -34,8 +34,8 @@ function Dots({ statuses }: { statuses: TaskStatus[] }) {
   );
 }
 
-function tasksByDay(tasks: Task[]) {
-  const map = new Map<string, Task[]>();
+function tasksByDay(tasks: DatedTask[]) {
+  const map = new Map<string, DatedTask[]>();
   for (const t of tasks) map.set(t.due, [...(map.get(t.due) ?? []), t]);
   return map;
 }
@@ -44,7 +44,7 @@ interface WeekProps {
   monday: Date;
   today: Date;
   selected: Date | null;
-  tasks: Task[];
+  tasks: DatedTask[];
   title: string;
   onSelect: (d: Date) => void;
   onShift: (weeks: number) => void;
@@ -88,7 +88,7 @@ interface MonthProps {
   month: Date;
   today: Date;
   selected: Date;
-  tasks: Task[];
+  tasks: DatedTask[];
   title: string;
   onSelect: (d: Date) => void;
   onShift: (months: number) => void;

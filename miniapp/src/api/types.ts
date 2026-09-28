@@ -11,11 +11,14 @@ export interface Task {
   title: string;
   subtitle: string;
   status: TaskStatus;
-  /** Срок, YYYY-MM-DD. */
-  due: string;
+  /** Срок, YYYY-MM-DD. Нет — событие без срока, взятое «В список дел» (раздел «Без срока»). */
+  due?: string;
   /** «Ежеквартально» — чип рядом со статусом. */
   periodicity?: string;
 }
+
+/** Задача календаря: там только события со сроком. */
+export type DatedTask = Task & { due: string };
 
 export interface TaskSection {
   id: string;
@@ -35,6 +38,8 @@ export interface TaskDetails extends Task {
   sections: TaskSection[];
   /** Есть черновик документа — показываем «Подготовить документ». */
   document?: boolean;
+  /** Уже «В списке дел» — кнопку «В список дел» не показываем. */
+  listed?: boolean;
   /** Текст уведомления после «Уже подано»: «Отмечено как поданное. Напомним об оплате 28 июля». */
   submittedNote?: string;
   /** Экран выполненной задачи. */
@@ -92,6 +97,57 @@ export interface Benefit {
   /** «пп. 15 п. 3 ст. 346.12 НК РФ» */
   basis: string;
   url: string;
+}
+
+/** Строка ленты: о чём бот писал в чат (сам пуш в чате удаляется после ответа). */
+export interface FeedItem {
+  id: string;
+  title: string;
+  subtitle: string;
+  /** Когда бот написал, ISO. */
+  sentAt: string;
+  due?: string;
+  status: "open" | "done" | "muted";
+  listed: boolean;
+  severity: "critical" | "warning" | "info";
+}
+
+export interface Option {
+  value: string;
+  label: string;
+}
+
+/** Экран «Данные компании»: текущий профиль, что в реестре и из чего выбирать. */
+export interface ProfileForm {
+  isLegalEntity: boolean;
+  regime?: string;
+  /** Нижняя граница диапазона из ответа пользователя; нет — берём реестр. */
+  headcount?: string;
+  registryHeadcount?: number;
+  okved: string;
+  /** «56.10 — Деятельность ресторанов…» */
+  registryOkved: string;
+  /** Код региона, «16». */
+  region: string;
+  registryRegion: string;
+  hasLicenses: boolean;
+  /** Признаки для ленты законов: true / false / null — «не знаю», бот спросит. */
+  flags: Record<string, boolean | null>;
+  patentFrom?: string;
+  patentTo?: string;
+  options: { regimes: Option[]; headcounts: Option[]; regions: Option[]; flags: Option[] };
+}
+
+export interface ProfileUpdate {
+  regime: string | null;
+  /** null — как в реестре. */
+  headcount: string | null;
+  okved: string;
+  region: string;
+  hasLicenses: boolean;
+  flags: Record<string, boolean | null>;
+  patentFrom: string | null;
+  patentTo: string | null;
 }
 
 export type RemindMode = "d30-7-1" | "d7-3-1" | "d3-0" | "d0";

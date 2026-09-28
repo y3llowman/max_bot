@@ -193,7 +193,7 @@ def msp_changes(inn: str, prev: dict | None, cur: dict | None, today: date) -> l
     """Снимки реестра МСП (asdict(RmspRecord), None — записи нет) → события.
     Открытые состояния msp.not_found / msp.excluded, которых больше нет в черновиках, worker закрывает."""
     if cur is None:
-        return [Draft("msp.not_found", key=f"msp.not_found:{inn}", payload={"expected": None})]
+        return [Draft("msp.not_found", key=f"msp.not_found:{inn}", payload={})]
     if cur.get("date_excluded"):
         return [Draft("msp.excluded", key=f"msp.excluded:{inn}", payload={"date_excluded": cur["date_excluded"]})]
     if not prev or prev.get("category") == cur["category"] or not prev.get("category"):

@@ -74,6 +74,16 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await engine.dispose()  # у каждого теста свой event loop — соединения не переиспользуем
 
+    async def api(self, max_user_id: int = MAX_USER) -> AsyncClient:
+        """Клиент API мини-приложения от имени пользователя (авторизация подменена)."""
+        async with SessionLocal() as db:
+            user = (await db.execute(select(User).where(User.max_user_id == max_user_id))).scalar_one()
+        app.dependency_overrides[get_current_user] = lambda: user
+        self.addCleanup(app.dependency_overrides.clear)
+        client = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+        self.addAsyncCleanup(client.aclose)
+        return client
+
     async def reply(self):
         """Пользователь нажал кнопку под последним сообщением: оно удаляется, очередь присылает следующее."""
         await worker.answered(MAX_USER, "mid-1")
@@ -129,30 +139,34 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         self.send.assert_awaited_once()  # все сроки на 26 октября — одним сообщением
         _, text, kb = self.send.await_args.args
         self.assertIn(" дней: 26 октября 2026", text)  # «через N» — от настоящей даты, dispatch берёт now
-        self.assertIn("Срок перенесён с 25 октября 2026", text)
-        self.assertIn("почему вам: у вас есть сотрудники", text)
-        buttons = [b for row in kb["payload"]["buttons"] for b in row]
-        self.assertIn({"type": "open_app", "text": "Открыть", "web_app": "radar_bot", "contact_id": 999,
-                       "payload": f"task_{pending[0].event_id}"}, buttons)
+        self.assertIn("• Расчёт по страховым взносам (РСВ) — за 9 месяцев 2026", text)
+        self.assertNotIn("почему вам", text, "в чат — коротко, подробности — в приложении")
         self.assertTrue(all(n.status == "sent" for n in await self.notifications()))
 
         ids = [n.event_id for n in pending]
-        self.assertEqual(await worker.apply_action(MAX_USER, ids, "snooze1d"), "Напомним завтра в 9:00")
-        snoozed = [n for n in await self.notifications() if n.label.startswith("snooze")]
-        self.assertEqual(len(snoozed), len(ids))
-        tomorrow = datetime.now(MSK).date() + timedelta(days=1)  # «Завтра» — от настоящей даты
-        self.assertEqual(snoozed[0].scheduled_at, datetime.combine(tomorrow, time(9), MSK))
+        joined = ",".join(map(str, ids))
+        self.assertEqual(kb["payload"]["buttons"], [
+            [{"type": "callback", "text": "📋 В список дел", "payload": f"ev:{joined}:list"},
+             {"type": "callback", "text": "✅ Сделано", "payload": f"ev:{joined}:done"}],
+            [{"type": "callback", "text": "🔕 Не актуально", "payload": f"ev:{joined}:mute"},
+             {"type": "open_app", "text": "Открыть", **BOT_APP, "payload": f"task_{ids[0]}"}],
+        ])
+        self.assertEqual(await worker.apply_action(MAX_USER, ids, "list"), "Добавили в список дел — он в мини-приложении")
+        self.assertTrue(all(e.in_list and e.status == "open" for e in await self.events() if e.id in ids),
+                        "в списке дел задача открыта — напоминания идут, пока её не закроют")
 
         self.assertEqual(await worker.apply_action(MAX_USER, ids, "done"), "Отмечено как выполненное")
         self.assertEqual(await worker.apply_action(222, ids, "done"), "Задача не найдена", "чужие задачи не трогаем")
         async with SessionLocal() as db:  # напоминание по закрытой задаче не уходит
-            for n in snoozed:
-                (await db.get(Notification, n.id)).scheduled_at = MORNING
+            user = (await db.execute(select(User))).scalar_one()
+            for event in await self.events():
+                if event.id in ids:
+                    await worker._queue(db, user.id, event, "T-1", MORNING)
             await db.commit()
         self.send.reset_mock()
-        await worker.dispatch()
+        await self.reply()
         self.send.assert_not_awaited()
-        self.assertTrue(all(n.status == "cancelled" for n in await self.notifications() if n.label.startswith("snooze")))
+        self.assertTrue(all(n.status == "cancelled" for n in await self.notifications() if n.label == "T-1"))
 
     async def test_queue_sends_one_message_until_answered(self):
         await self.answer("usn_income", 36)
@@ -281,7 +295,7 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event.due, date(2027, 2, 19))
         await worker.dispatch()
         self.send.assert_awaited_once()
-        self.assertIn("В ЕГРЮЛ отметка о недостоверности сведений", self.send.await_args.args[1])
+        self.assertIn("Недостоверные сведения в ЕГРЮЛ", self.send.await_args.args[1])
 
         with patch.object(worker, "fetch_egrul", AsyncMock(return_value={"inn": INN, "notes": []})):
             await worker.process_egrul(INN, TODAY)
@@ -290,7 +304,7 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         self.send.assert_awaited_once()  # пока не ответили на прошлое — новое ждёт
         await self.reply()
         self.deleted.assert_awaited_once_with("mid-1")  # отвеченное убрано из чата
-        self.assertIn("Отметка о недостоверности снята", self.send.await_args.args[1])
+        self.assertIn("Отметку о недостоверности сняли", self.send.await_args.args[1])
 
     async def test_inspections_from_erknm(self):
         from data_fetching.erknm_client import Knm
@@ -305,7 +319,7 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((event.due, event.source), (date(2026, 10, 19), "erknm"))
         await worker.dispatch()
         self.send.assert_awaited_once()
-        self.assertIn("ГУ МЧС планирует документарную проверку", self.send.await_args.args[1])
+        self.assertIn("ГУ МЧС: документарную проверку с 19 октября 2026", self.send.await_args.args[1])
 
         cancelled = replace(check, status="Отменено", status_key="TYPE_CANCELED")
         with patch.object(worker.erknm_client, "fetch_month", month([cancelled])):
@@ -316,7 +330,14 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Готово", await worker.demo_event(MAX_USER, "knm"))
         text = self.send.await_args.args[1]
         self.assertIn("Запланирована проверка", text)
-        self.assertIn("Ваши права", text)
+        self.assertNotIn("Ваши права", text, "подробности — на экране события")
+        [event] = await self.events(type="inspection.planned")
+        client = await self.api()
+        details = (await client.get(f"/api/tasks/{event.id}")).json()
+        sections = {section["title"]: section for section in details["sections"]}
+        self.assertEqual(sections["Ваши права"]["id"], "law")
+        self.assertIn("Что сделать", sections)
+        self.assertIn("Имитация для демо", "\n".join(line for s in details["sections"] for line in s.get("body", [])))
 
     # ---- новые законы (pravo.gov.ru подменён)
     async def test_new_laws_reach_matching_company(self):
@@ -367,12 +388,10 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
             texts_sent = {call.args[1].split("\n")[0]: call.args for call in self.send.await_args_list}
             self.assertEqual(len(texts_sent), 2)
             _, text, kb = next(args for title, args in texts_sent.items() if "Вышел акт" in title)
-            self.assertIn("Почему вам</b>\nВы на УСН доходы.", text)
-            self.assertIn("Может изменить ваши задачи: Декларация по УСН", text)
+            self.assertIn("Почему вам: вы на УСН доходы.", text)
             buttons = [b for row in kb["payload"]["buttons"] for b in row]
-            self.assertIn({"type": "link", "text": "Источник",
-                           "url": "http://publication.pravo.gov.ru/document/0001202609250001"}, buttons)
-            self.assertNotIn("open_app", [b["type"] for b in buttons], "без срока задачи нет — «Открыть» не нужна")
+            self.assertEqual([b.get("payload") for b in buttons],
+                             [f"ev:{law.id}:list", f"ev:{law.id}:done", f"ev:{law.id}:mute", f"task_{law.id}"])
             _, text, kb = next(args for title, args in texts_sent.items() if "кассу" in title)
             self.assertEqual([b["payload"] for b in kb["payload"]["buttons"][0]],
                              ["flag:cash_register:yes", "flag:cash_register:no"])
@@ -461,11 +480,11 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
 
             texts = "\n".join(call.args[1] for call in self.send.await_args_list)
             for expected in ("Запланирована проверка", "Запланирован профилактический визит", "предостережение",
-                             "отметка о недостоверности", "Отметка о недостоверности снята", "дисквалифицирован",
-                             "Срок дисквалификации руководителя истёк", "Компания в процессе прекращения",
-                             "Изменились сведения в ЕГРЮЛ: руководитель", "Уведомите МВД", "исключена из реестра МСП",
-                             "Изменилась категория МСП", "Компании нет в реестре МСП", "Вышел акт, который касается вас",
-                             "Вы принимаете оплату через кассу", "Имитация для демо"):
+                             "Недостоверные сведения в ЕГРЮЛ", "Отметку о недостоверности сняли", "дисквалифицирован",
+                             "Дисквалификация руководителя закончилась", "Компания в процессе прекращения",
+                             "В ЕГРЮЛ изменились сведения: руководитель", "Уведомите МВД", "исключена из реестра МСП",
+                             "Изменилась категория МСП", "Компании нет в реестре МСП", "Вышел акт, который вас касается",
+                             "Вы принимаете оплату через кассу"):
                 self.assertIn(expected, texts)
 
             demo_events = await self.events(source="demo")
@@ -541,7 +560,118 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(INN, cells)
         self.assertIn("18210501021011000110", cells)  # КБК УСН «доходы минус расходы»
 
+    async def test_list_feed_and_closing_in_app(self):
+        """Событие без срока: «В список дел» из приложения убирает пуш из чата; лента помнит, что писал бот."""
+        [event] = await worker.process_msp(INN, None, TODAY)  # «Компании нет в реестре МСП» — без срока
+        await worker.dispatch()
+        client = await self.api()
+        dashboard = (await client.get("/api/dashboard")).json()
+        self.assertNotIn(str(event.id), [t["id"] for t in dashboard["tasks"]], "без срока и не в списке — не задача")
+        [item] = (await client.get("/api/feed")).json()
+        self.assertEqual((item["id"], item["title"], item["status"], item["listed"], item["severity"]),
+                         (str(event.id), "Компании нет в реестре МСП", "open", False, "warning"))
+
+        self.assertEqual((await client.post(f"/api/tasks/{event.id}/list")).status_code, 204)
+        self.deleted.assert_awaited_once_with("mid-1")  # пуш ушёл из чата — задача в приложении
+        task = next(t for t in (await client.get("/api/dashboard")).json()["tasks"] if t["id"] == str(event.id))
+        self.assertNotIn("due", task)
+        self.assertTrue((await client.get(f"/api/tasks/{event.id}")).json()["listed"])
+        self.assertTrue((await client.get("/api/feed")).json()[0]["listed"])
+        self.assertEqual((await client.post("/api/tasks/999999/list")).status_code, 404)
+
+    async def test_blocked_bot_stops_messages_until_return(self):
+        from maxapi.exceptions.max import MaxApiError
+        await self.answer("usn_income", 36)
+        deadlines = await self.events(type="deadline")
+        later = next(e for e in deadlines if e.due != deadlines[0].due)
+        async with SessionLocal() as db:
+            user = (await db.execute(select(User))).scalar_one()
+            for event in (deadlines[0], later):
+                await worker._queue(db, user.id, event, "T-1", MORNING)
+            await db.commit()
+        self.send.side_effect = MaxApiError(code=403, raw={"code": "chat.denied"})  # заблокировал бота
+        await worker.dispatch()
+        self.assertEqual(sorted(n.status for n in await self.notifications()), ["cancelled", "failed"],
+                         "первое не ушло, остальные из очереди сняты")
+        await worker.queue_reminders(MORNING + timedelta(days=1))
+        self.assertEqual(len(await self.notifications()), 2, "неактивным не пишем")
+        async with SessionLocal() as db:
+            self.assertFalse((await db.execute(select(User))).scalar_one().is_active)
+        client = await self.api()  # открыл мини-приложение — снова доступен
+        with patch("app.api.routes.users.validate_max_init_data", lambda data: {"id": MAX_USER}):
+            self.assertEqual((await client.post("/api/user/auth", json={"initData": "x"})).status_code, 200)
+        async with SessionLocal() as db:
+            self.assertTrue((await db.execute(select(User))).scalar_one().is_active)
+
+    async def test_one_company_one_user(self):
+        from app.api.routes import company as company_routes
+        from databases.businesses_db import CompanyTaken
+        async with SessionLocal() as db:
+            other = User(max_user_id=222)
+            db.add(other)
+            await db.flush()
+            with self.assertRaises(CompanyTaken):
+                await save_business(db, other.id, RECORD)
+            await db.commit()
+        client = await self.api(222)
+        with patch.object(company_routes.rmsp_client, "fetch_by_inn", lambda inn: RECORD):
+            response = await client.post("/api/session", json={"inn": INN})
+        self.assertEqual(response.status_code, 409)
+
+    async def test_profile_form_saves_only_corrections(self):
+        from bot import message_handler as bot_flow
+        async with SessionLocal() as db:  # бот ждёт ответа на карточку «Нашли вашу компанию. Всё верно?»
+            user = (await db.execute(select(User))).scalar_one()
+            user.awaiting_mid, user.awaiting_since = "mid-card", datetime.now(MSK)
+            await db.commit()
+        client = await self.api()
+        form = (await client.get("/api/company/profile")).json()
+        self.assertEqual((form.get("regime"), form["okved"], form["region"], form["hasLicenses"], form["registryRegion"]),
+                         (None, "41.20", "16", False, "Республика Татарстан"))
+        self.assertNotIn("psn", [o["value"] for o in form["options"]["regimes"]], "патент — только у ИП")
+        self.assertIn("cash_register", form["flags"])
+
+        update = {"regime": "usn_income", "headcount": "16", "okved": "56.10", "region": "16", "hasLicenses": True,
+                  "flags": {"cash_register": True, "marked_goods": None}}
+        for bad in ({"okved": "ресторан"}, {"regime": "psn"}, {"region": "00"}, {"headcount": "7"}):
+            self.assertEqual((await client.put("/api/company/profile", json=update | bad)).status_code, 422, bad)
+        next_step = AsyncMock(return_value=False)
+        with patch.object(bot_flow, "next_step", next_step):
+            response = await client.put("/api/company/profile", json=update)
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("56.10", response.json()["okved"])
+            next_step.assert_awaited_once_with(MAX_USER)  # бот продолжает в чате: итог онбординга
+            self.deleted.assert_awaited_once_with("mid-card")  # карточка «Всё верно?» ушла из чата
+            client = await self.api()  # пользователь из БД — как при настоящей авторизации
+            await client.put("/api/company/profile", json=update)
+            next_step.assert_awaited_once()  # профиль был полным и карточки нет — в чат не пишем
+
+        async with SessionLocal() as db:
+            answers = await db.get(BusinessProfile, INN)
+            profile = await worker.load_profile(db, INN)
+        self.assertEqual((answers.okved_main, answers.region_code, answers.has_licenses), ("56.10", None, True),
+                         "совпадающее с реестром не храним — обновления реестра подтянутся")
+        self.assertEqual((profile.okved_main, profile.region_code, profile.headcount, profile.flags),
+                         ("56.10", "16", 16, {"cash_register": True}))
+        self.assertTrue(await self.events(type="deadline"), "обязанности пересчитаны")
+
     # ---- онбординг в боте
+    async def test_registration_card_waits_for_answer(self):
+        from bot import message_handler as bot_flow
+        say = AsyncMock(return_value="mid-card")
+        with patch.object(bot_flow, "say", say), patch.object(bot_flow, "bot_app", AsyncMock(return_value=BOT_APP)):
+            async with SessionLocal() as db:
+                business = await db.get(Business, INN)
+            await bot_flow.show_found(MAX_USER, business)
+        _, text, kb = say.await_args.args
+        self.assertTrue(text.startswith("Нашли вашу компанию:"))
+        self.assertIn("Режим налогообложения: в открытых реестрах его нет — спросим", text)
+        self.assertTrue(text.endswith("Всё верно?"))
+        self.assertEqual([(b.type, b.payload) for row in kb.payload.buttons for b in row],
+                         [("callback", "reg:ok"), ("open_app", "profile_edit")])
+        async with SessionLocal() as db:
+            self.assertEqual((await db.execute(select(User))).scalar_one().awaiting_mid, "mid-card")
+
     async def test_bot_asks_profile_questions_then_shows_obligations(self):
         from bot import message_handler as bot_flow
         say = AsyncMock(return_value="mid-q")
@@ -555,12 +685,14 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
             await bot_flow.next_step(MAX_USER)
         summary = say.await_args.args[1]
         self.assertIn("Радар настроен: 10 обязанностей", summary)
-        self.assertIn("• Декларация по УСН", summary)
+        self.assertIn("Ближайший срок — ", summary)
+        self.assertIn("Список, календарь и документы — в приложении", summary)
         async with SessionLocal() as db:
             card = bot_flow.company_card(await db.get(Business, INN), await worker.load_profile(db, INN))
         self.assertIn("ОКВЭД: 41.20 — Строительство жилых и нежилых зданий", card)
         self.assertIn("Микропредприятие · 1–15 человек", card)
         self.assertIn("Регион: Республика Татарстан", card)
+        self.assertIn("Лицензии: нет", card)
 
     async def test_registry_headcount_skips_question(self):
         from bot import message_handler as bot_flow
@@ -573,12 +705,12 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
             await bot_flow.next_step(MAX_USER)
         summary = say.await_args.args[1]
         self.assertIn("Радар настроен", summary, "о численности не спрашиваем — она есть в реестре")
-        self.assertIn("Доступно при вашей численности", summary)
-        self.assertIn("Можно применять УСН", summary)
-        self.assertNotIn("АУСН", summary, "12 человек — больше порога АУСН")
         async with SessionLocal() as db:
             profile = await worker.load_profile(db, INN)
             self.assertIn("Микропредприятие · 12 человек (ФНС)", bot_flow.company_card(await db.get(Business, INN), profile))
+        benefits = [b.title for b in profile.headcount_benefits()]  # льготы — в профиле мини-приложения
+        self.assertTrue(any(title.startswith("Можно применять УСН") for title in benefits))
+        self.assertFalse(any("АУСН" in title for title in benefits), "12 человек — больше порога АУСН")
         self.assertEqual((profile.headcount, profile.headcount_exact, profile.has_employees), (12, True, True))
 
         await self.answer("usn_income", 36)  # поправили в /profile — ответ важнее реестра

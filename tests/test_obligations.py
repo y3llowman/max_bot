@@ -61,7 +61,12 @@ class ApplicabilityTest(unittest.TestCase):
         self.assertEqual(applicable(Profile(inn="500100732259", is_legal_entity=False)), {"ip_contrib"})
 
     def test_ausn_ip_has_no_contributions(self):
-        self.assertEqual(applicable(Profile(inn="500100732259", is_legal_entity=False, tax_regime="ausn")), set())
+        self.assertEqual(applicable(Profile(inn="500100732259", is_legal_entity=False, tax_regime="ausn")), {"ausn_pay"})
+
+    def test_ausn_employer_reports_only_service_history(self):
+        """На АУСН НДФЛ за сотрудников платит банк, РСВ, 6-НДФЛ и персонифицированные сведения не сдаются."""
+        codes = applicable(Profile(inn="7701234567", is_legal_entity=True, tax_regime="ausn", has_employees=True, headcount=3))
+        self.assertEqual(codes, {"ausn_pay", "efs1_ausn", "buh"})
 
     def test_osno_company(self):
         codes = applicable(Profile(inn="7701234567", is_legal_entity=True, tax_regime="osno", has_employees=False))
@@ -69,7 +74,24 @@ class ApplicabilityTest(unittest.TestCase):
 
     def test_osno_ip_files_vat(self):
         codes = applicable(Profile(inn="500100732259", is_legal_entity=False, tax_regime="osno", has_employees=False))
-        self.assertEqual(codes, {"vat_decl", "ip_3ndfl", "enp", "ip_contrib"})
+        self.assertEqual(codes, {"vat_decl", "ip_3ndfl", "enp", "ip_contrib", "ip_ndfl_notice", "ip_ndfl_pay"})
+
+    def test_ip_ndfl_advances_and_annual_tax(self):
+        ip = Profile(inn="500100732259", is_legal_entity=False, tax_regime="osno")
+        nominal = sorted(n for _, n, _ in dues("ip_ndfl_pay", ip))
+        self.assertEqual(nominal, [date(2026, 10, 28), date(2027, 4, 28), date(2027, 7, 15), date(2027, 7, 28)])
+        self.assertEqual([n for _, n, _ in dues("ip_ndfl_notice", ip)][:2], [date(2026, 10, 25), date(2027, 4, 25)])
+
+    def test_patent_payments_follow_patent_term(self):
+        year = Profile(inn="500100732259", is_legal_entity=False, tax_regime="psn",
+                       patent_from=date(2027, 1, 1), patent_to=date(2027, 12, 31))
+        self.assertEqual([(n, p) for _, n, p in dues("patent_pay", year)],
+                         [(date(2027, 3, 31), "Патент 01.01.2027–31.12.2027: треть суммы")])  # 28.12 — за окном
+        short = Profile(inn="500100732259", is_legal_entity=False, tax_regime="psn",
+                        patent_from=date(2026, 10, 1), patent_to=date(2027, 3, 31))
+        self.assertEqual([n for _, n, _ in dues("patent_pay", short)], [date(2027, 3, 31)])  # 6 месяцев — одним платежом
+        unknown = Profile(inn="500100732259", is_legal_entity=False, tax_regime="psn")
+        self.assertIsNone(BY_CODE["patent_pay"].applies(unknown), "без срока патента дат оплаты не посчитать")
 
     def test_why_is_filled(self):
         p = Profile(inn="7701234567", is_legal_entity=True, tax_regime="usn_ie", has_employees=True, headcount=36)

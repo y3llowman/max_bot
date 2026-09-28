@@ -62,6 +62,12 @@ export function Profile() {
       )}
       <ListGroup>
         <ListCell
+          title="Данные компании"
+          caption="Режим, численность, ОКВЭД, регион, признаки"
+          chevron
+          onClick={() => navigate("/profile/edit")}
+        />
+        <ListCell
           title="Уведомления"
           value={notif ? channelsSummary(notif) : undefined}
           chevron

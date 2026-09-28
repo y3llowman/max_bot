@@ -149,8 +149,7 @@ TEMPLATES["msp.not_found"] = """{% import "_m" as m with context %}
 
 <b>Что произошло</b>
 В реестре МСП записи по ИНН {{ company.inn }} нет.
-{% if ev.expected %}Новые компании попадают в реестр 10-го числа месяца после регистрации — для вас это {{ ev.expected|date_ru }}.
-{% endif %}{{ m.source() }}
+{{ m.source() }}
 
 <b>Что это значит</b>
 Без записи в реестре недоступны меры поддержки для МСП.
@@ -194,13 +193,6 @@ TEMPLATES["msp.category_changed"] = """{% import "_m" as m with context %}
 {% endif %}
 """
 
-TEMPLATES["msp.flags_changed"] = """{% import "_m" as m with context %}
-{{ m.head("Изменились признаки в реестре МСП") }}
-
-{% for name, on in ev.flips %}• {{ name }}: {{ "появился" if on else "снят" }}
-{% endfor %}{{ m.source() }}
-"""
-
 TEMPLATES["law.upcoming"] = """{% import "_m" as m with context %}
 {{ m.head("Вышел акт, который касается вас") }}
 
@@ -242,26 +234,6 @@ TEMPLATES["profile.question"] = """
 Ответьте — если это про вас, пришлём акт с официальным текстом. Ответ запомним и по этой теме больше не спросим.
 """
 
-TEMPLATES["bank.blocked"] = """{% import "_m" as m with context %}
-{{ m.head("Операции по счёту приостановлены") }}
-
-<b>Что произошло</b>
-Действует решение о приостановлении операций по счетам в банке с БИК {{ ev.bik }}{{ (" от " ~ ev.date|date_ru) if ev.date else "" }}. Основание: код {{ ev.code }} — {{ ev.reason }}. Решение приняла {{ ev.ifns }}.
-<i>Источник: сервис ФНС «БАНКИНФОРМ», данные на {{ src.fetched_at|date_ru }}</i>
-
-<b>Что это значит</b>
-Расходные операции по счёту заблокированы. Пока решение действует, банки не откроют новые счета.
-
-<b>Что сделать</b>
-{% if ev.code|string == "1" %}
-Погасите задолженность по ЕНС — после этого решение отменяется (ст. 76 НК РФ).
-{% elif ev.code|string == "2" %}
-Сдайте просроченную декларацию или расчёт — после этого решение отменяется (ст. 76 НК РФ).
-{% else %}
-Уточните основание в инспекции, которая приняла решение.
-{% endif %}
-"""
-
 TEMPLATES["inspection.planned"] = """{% import "_m" as m with context %}
 {% set visit = ev.classification == "ПМ" %}
 {{ m.head("Запланирован профилактический визит" if visit else "Запланирована проверка") }}
@@ -297,17 +269,6 @@ TEMPLATES["inspection.warning"] = """{% import "_m" as m with context %}
 Устраните нарушение или подайте возражение на предостережение — порядок и срок указаны в положении о виде контроля (ст. 49 закона № 248-ФЗ).
 """
 
-TEMPLATES["cert.expiring"] = """{% import "_m" as m with context %}
-{{ m.head("Истекает " ~ ev.doc_type) }}
-
-<b>Что произошло</b>
-{{ ev.doc_type|capitalize }} № {{ ev.number }} на «{{ ev.product }}» действует до {{ ev.valid_until|date_ru }} — {{ ev.valid_until|rel }}.
-<i>Источник: реестры Росаккредитации, данные на {{ src.fetched_at|date_ru }}</i>
-
-<b>Что сделать</b>
-Если продолжаете выпускать или ввозить эту продукцию — начните оформление нового документа заранее.
-"""
-
 # Все сроки на одну дату — одним сообщением.
 # Правило вёрстки: блочные теги — на отдельных строках (trim_blocks их «съедает» целиком),
 # условия внутри строки — выражениями {{ a if cond else b }}.
@@ -329,67 +290,83 @@ TEMPLATES["deadline.group"] = """
 <i>Сроки рассчитаны ботом для вашего профиля. Сверяйтесь с налоговым календарём ФНС.</i>
 """
 
-TEMPLATES["onboarding"] = """
-📡 <b>Радар настроен: {{ company.name }}</b>
-Проверили ЕГРЮЛ и реестр МСП — данные на {{ today|date_ru }}.
+# ---------------------------------------------------------------- пуши в чат
+# Бот присылает короткую сводку: что случилось и главное число (срок, дата). Подробности — «что это
+# значит», «что сделать», основание — на экране события в мини-приложении (кнопка «Открыть»): туда идут
+# полные шаблоны выше. Имя шаблона пуша — "push." + имя полного.
 
-{% if critical %}
-🔴 <b>Требует внимания сейчас</b>
-{% for e in critical %}
-• {{ e.title }}{{ (" — до " ~ e.due|date_ru) if e.due else "" }}
+TEMPLATES["push.deadline.group"] = """
+{% set n = (due - today).days %}
+{{ icon }} <b>{% if n > 1 %}Через {{ n }} {{ n|plural("день", "дня", "дней") }}{% elif n == 1 %}Завтра{% elif n == 0 %}Сегодня последний день{% else %}Просрочено на {{ -n }} {{ n|plural("день", "дня", "дней") }}{% endif %}: {{ due|date_ru }}</b>
+{% for d in items %}
+• {{ d.title }}{{ (" — " ~ d.period|decap) if d.period else "" }}
 {% endfor %}
-
-{% endif %}
-{% if warning %}
-🟠 <b>Важно</b>
-{% for e in warning %}
-• {{ e.title }}
-{% endfor %}
-
-{% endif %}
-{% if deadlines %}
-🗓 <b>Ближайшие сроки</b>
-{% for d in deadlines[:6] %}
-• {{ d.due|date_short }} — {{ d.payload.title }}{{ (" (перенос с " ~ d.payload.original|date_short ~ ")") if d.payload.shifted else "" }}
-{% endfor %}
-
-{% endif %}
-{% if missing %}
-❓ Ответьте на {{ missing|length }} {{ missing|length|plural("вопрос", "вопроса", "вопросов") }} — и мы добавим сроки по налогам и сотрудникам.
-
-{% endif %}
-Подробности по каждому пункту — отдельными сообщениями ниже.
 """
 
-TEMPLATES["digest.weekly"] = """
-🗓 <b>Неделя {{ today|date_short }}–{{ week_end|date_short }}: {{ company.name }}</b>
-
-{% if open_events %}
-<b>Открытые вопросы</b>
-{% for e in open_events %}
-{{ e.icon }} {{ e.title }}
-{% endfor %}
-
-{% endif %}
-<b>Сроки на 2 недели</b>
-{% for d in deadlines %}
-• {{ d.due|date_short }} ({{ d.due|rel }}) — {{ d.payload.title }}
-{% else %}
-Сроков нет 🎉
-{% endfor %}
-{% if infos %}
-
-<b>К сведению</b>
-{% for e in infos %}
-🔵 {{ e.title }}
-{% endfor %}
-{% endif %}
-{% if possible|default([]) %}
-
-<b>Возможно, касается вас</b>
-{% for e in possible %}
-• {{ e.title }}{{ (" — с " ~ e.effective_from|date_short) if e.effective_from else "" }}
-{% endfor %}
-Ответьте на вопросы бота — и мы скажем точно.
-{% endif %}
+TEMPLATES["push.egrul.unreliable"] = """
+{{ icon }} <b>Недостоверные сведения в ЕГРЮЛ</b>
+Отметка: {{ ev.about|join(", ") or "см. выписку" }}.{{ (" Исключить компанию могут с " ~ ev.exclusion_possible_from|date_ru ~ ".") if ev.exclusion_possible_from else "" }}
 """
+
+TEMPLATES["push.egrul.unreliable_resolved"] = """
+{{ icon }} <b>Отметку о недостоверности сняли</b>
+В свежей выписке ЕГРЮЛ её больше нет.
+"""
+
+TEMPLATES["push.egrul.director_disqualified"] = """
+{{ icon }} <b>Руководитель дисквалифицирован</b>
+{{ ev.director.fio|fio_short }} — до {{ ev.end|date_ru }}: руководить компанией в этот срок нельзя.
+"""
+
+TEMPLATES["push.egrul.disqualification_ended"] = """
+{{ icon }} <b>Дисквалификация руководителя закончилась</b>
+{{ ev.director.fio|fio_short }} снова может руководить компанией.
+"""
+
+TEMPLATES["push.egrul.termination"] = """
+{{ icon }} <b>Компания в процессе прекращения</b>
+{{ ev.note|truncate(160) }}{{ ("\nВозразить можно до " ~ ev.objection_due|date_ru ~ ".") if ev.objection_due else "" }}
+"""
+
+TEMPLATES["push.egrul.changed"] = """
+{{ icon }} <b>В ЕГРЮЛ изменились сведения: {{ ev.field_title }}</b>
+Стало: {{ ev.new or "—" }}
+"""
+
+TEMPLATES["push.mvd.foreign_director"] = """
+{{ icon }} <b>Уведомите МВД о руководителе-иностранце</b>
+{{ ev.director.fio|fio_short }}, {{ ev.director.citizenship }}.
+"""
+
+TEMPLATES["push.msp.not_found"] = """
+{{ icon }} <b>Компании нет в реестре МСП</b>
+Без записи недоступны льготы и меры поддержки для МСП.
+"""
+
+TEMPLATES["push.msp.excluded"] = """
+{{ icon }} <b>Компания исключена из реестра МСП</b>
+Дата исключения: {{ ev.date_excluded|date_ru }}.
+"""
+
+TEMPLATES["push.msp.category_changed"] = """
+{{ icon }} <b>Изменилась категория МСП</b>
+{{ ev.old|cap1 }} → {{ ev.new }}.{{ (" Нужны локальные нормативные акты до " ~ ev.lna_due|date_ru ~ ".") if ev.lost_micro else "" }}
+"""
+
+TEMPLATES["push.inspection.planned"] = """
+{{ icon }} <b>{{ "Запланирован профилактический визит" if ev.classification == "ПМ" else "Запланирована проверка" }}</b>
+{{ ev.authority }}: {{ ev.kind }} с {{ ev.start|date_ru }} — {{ ev.start|rel }}.
+"""
+
+TEMPLATES["push.inspection.warning"] = """
+{{ icon }} <b>Вам объявлено предостережение</b>
+{{ ev.authority }} · {{ ev.control }}
+"""
+
+TEMPLATES["push.law.upcoming"] = """
+{{ icon }} <b>Вышел акт, который вас касается</b>
+«{{ ev.title|truncate(180) }}»
+Почему вам: {{ ev.reasons[0] }}.{{ (" Вступает в силу " ~ ev.effective_from|date_ru ~ ".") if ev.effective_from and (ev.effective_from|as_date) > today else "" }}
+"""
+
+TEMPLATES["push.profile.question"] = TEMPLATES["profile.question"]

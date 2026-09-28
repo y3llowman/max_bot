@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import type { NotificationSettings, RemindMode } from "../api/types";
 import { ActionBar } from "../components/ActionBar";
+import { Alert } from "../components/Alert";
 import { Button } from "../components/Button";
 import { Radio, Toggle } from "../components/Controls";
 import { ListCell, ListGroup } from "../components/List";
@@ -23,21 +25,17 @@ const REMIND: { value: RemindMode; label: string }[] = [
 
 const range = (r: string) => r.replace("–", " – ");
 
-/** 07 · Уведомления. */
+/** 07 · Настройки уведомлений (Профиль → «Уведомления»). */
 export function Notifications() {
-  const { data, error, loading, reload, setData } = useAsync(() => api.notifications(), []);
+  const { data, error, loading, reload } = useAsync(() => api.notifications(), []);
   const [draft, setDraft] = useState<NotificationSettings | null>(null);
   const [saving, setSaving] = useState(false);
+  const navigate = useNavigate();
   const toast = useToast();
 
   useEffect(() => {
     if (data) setDraft(data);
   }, [data]);
-
-  // экран открыт — точка «есть новые» на колокольчике гаснет
-  useEffect(() => {
-    api.markNotificationsSeen().catch(() => undefined);
-  }, []);
 
   const set = <K extends keyof NotificationSettings>(key: K, value: NotificationSettings[K]) =>
     setDraft((d) => (d ? { ...d, [key]: value } : d));
@@ -48,25 +46,22 @@ export function Notifications() {
     setSaving(true);
     try {
       await api.saveNotifications(draft);
-      setData(draft);
-      toast({
-        text: "Настройки сохранены",
-        action: {
-          label: "Отменить",
-          onClick: () => {
-            setDraft(previous);
-            setData(previous);
-            api.saveNotifications(previous).catch(() =>
-              toast({ text: "Не получилось отменить — попробуйте ещё раз", icon: "alert-circle" }),
-            );
-          },
-        },
-      });
     } catch {
-      toast({ text: "Не получилось сохранить — попробуйте ещё раз", icon: "alert-circle" });
-    } finally {
       setSaving(false);
+      toast({ text: "Не получилось сохранить — попробуйте ещё раз", icon: "alert-circle" });
+      return;
     }
+    navigate("/tasks");  // сохранили — на главную
+    toast({
+      text: "Настройки сохранены",
+      action: {
+        label: "Отменить",
+        onClick: () =>
+          api.saveNotifications(previous).catch(() =>
+            toast({ text: "Не получилось отменить — попробуйте ещё раз", icon: "alert-circle" }),
+          ),
+      },
+    });
   };
 
   if (error) {
@@ -119,22 +114,15 @@ export function Notifications() {
               onClick={() => set("chat", !draft.chat)}
               trail={<Toggle checked={draft.chat} />}
             />
-            <ListCell
-              title="Push-уведомления"
-              role="switch"
-              checked={draft.push}
-              onClick={() => set("push", !draft.push)}
-              trail={<Toggle checked={draft.push} />}
-            />
-            <ListCell
-              title="Электронная почта"
-              caption={draft.emailAddress}
-              role="switch"
-              checked={draft.email}
-              onClick={() => set("email", !draft.email)}
-              trail={<Toggle checked={draft.email} />}
-            />
+            {/* другие каналы бот пока не отправляет — не обещаем то, чего нет */}
+            <ListCell title="Push-уведомления" caption="Скоро" role="switch" checked={false} onClick={() => undefined} disabled trail={<Toggle checked={false} />} />
+            <ListCell title="Электронная почта" caption="Скоро" role="switch" checked={false} onClick={() => undefined} disabled trail={<Toggle checked={false} />} />
           </ListGroup>
+          {!draft.chat && (
+            <Alert tone="warning" title="Бот перестанет писать">
+              Напоминания о сроках, новые законы и изменения в реестрах перестанут приходить. Сроки останутся на главной.
+            </Alert>
+          )}
 
           <SectionHeader title="Тихие часы" />
           <ListGroup>

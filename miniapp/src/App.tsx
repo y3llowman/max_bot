@@ -8,9 +8,11 @@ import { ToastProvider } from "./components/Toast";
 import { CalendarScreen } from "./screens/Calendar";
 import { Connect } from "./screens/Connect";
 import { Dashboard } from "./screens/Dashboard";
+import { Feed } from "./screens/Feed";
 import { Launch } from "./screens/Launch";
 import { Notifications } from "./screens/Notifications";
 import { Profile } from "./screens/Profile";
+import { ProfileEdit } from "./screens/ProfileEdit";
 import { Splash } from "./screens/Splash";
 import { TaskScreen } from "./screens/Task";
 import { SessionProvider, useSession } from "./session";
@@ -73,6 +75,8 @@ const router = createHashRouter([
       },
       { path: "/task/:id", element: <RequireSession><TaskScreen /></RequireSession> },
       { path: "/notifications", element: <RequireSession><Notifications /></RequireSession> },
+      { path: "/feed", element: <RequireSession><Feed /></RequireSession> },
+      { path: "/profile/edit", element: <RequireSession><ProfileEdit /></RequireSession> },
       { path: "*", element: <Navigate to="/" replace /> },
     ],
   },

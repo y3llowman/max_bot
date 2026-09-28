@@ -3,7 +3,7 @@ import html
 import logging
 import re
 from dataclasses import asdict
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 
@@ -16,14 +16,15 @@ from maxapi.context import BaseContext, State, StatesGroup
 from bot.client import bot, bot_app
 from core.config import DEBUG
 from data_fetching import rmsp_client
-from databases.businesses_db import Business, current_business, save_business
+from databases.businesses_db import Business, CompanyTaken, current_business, save_business
 from databases.engine_start import SessionLocal
 from databases.users_db import User
 from notifications import demo as demo_tour
 from notifications import worker
 from notifications.models import BusinessProfile, RadarEvent
+from notifications.planner import today_msk
 from radar.deadlines import CATEGORY_RU, HEADCOUNT_RU, REGIME_RU, Profile, headcount_ru, region_name
-from radar.render import company_name, date_ru, date_short, plural
+from radar.render import company_name, date_ru, date_short, decap, plural
 
 logger = logging.getLogger(__name__)
 
@@ -63,24 +64,40 @@ QUESTIONS = {
 }
 
 
+MSP_SIGNS = {"is_social": "социальное предприятие", "is_hitech": "инновационная деятельность",
+             "is_partnership": "участник программы партнёрства"}
+
+
 def company_card(business: Business, profile: Profile) -> str:
-    """Профиль компании: название, ОКВЭД, категория, численность, регион — всё из реестров и ответов."""
-    size = [CATEGORY_RU.get(business.category), headcount_ru(profile)]
+    """Всё, что нашли о компании: реестр МСП и поправки пользователя. Выписка ЕГРЮЛ (адрес, КПП,
+    руководитель) догружается в фоне и видна в профиле мини-приложения."""
+    okved = (f"{business.main_activity_code} — {html.escape(business.main_activity_name)}"
+             if profile.okved_main == business.main_activity_code else f"{profile.okved_main} (указан вами)")
+    contacts = " · ".join(html.escape(c) for c in (business.phone, business.email, business.website) if c)
+    signs = ", ".join(label for field, label in MSP_SIGNS.items() if getattr(business, field))
     lines = [
         f"<b>{html.escape(company_name(business.name))}</b>",
         f"ИНН {business.inn} · ОГРН {business.ogrn}",
-        f"ОКВЭД: {business.main_activity_code} — {html.escape(business.main_activity_name)}",
-        " · ".join(filter(None, size)),
-        f"Регион: {region_name(business.region_code) or business.region_code}",
+        f"ОКВЭД: {okved}",
+        " · ".join(filter(None, [CATEGORY_RU.get(business.category), headcount_ru(profile)])),
+        f"Регион: {region_name(profile.region_code) or profile.region_code}",
+        f"Лицензии: {'есть' if profile.has_licenses else 'нет'}",
+        f"Контакты: {contacts}" if contacts else "",
+        f"Признаки МСП: {signs}" if signs else "",
+        f"Режим: {REGIME_RU[profile.tax_regime]}" if profile.tax_regime
+        else "Режим налогообложения: в открытых реестрах его нет — спросим",
+        f"<i>Источник: реестр МСП (ФНС), данные на {date_ru(business.updated_at.date())}</i>",
     ]
-    if profile.tax_regime:
-        lines.append(f"Режим: {REGIME_RU[profile.tax_regime]}")
-    lines.append(f"<i>Источник: реестр МСП (ФНС), данные на {date_ru(business.updated_at.date())}</i>")
     return "\n".join(line for line in lines if line)
 
 
 def app_keyboard(app: dict):
-    return ButtonsPayload(buttons=[[OpenAppButton(text="Открыть ленту обязанностей", **app)]]).pack()
+    return ButtonsPayload(buttons=[[OpenAppButton(text="Открыть приложение", **app)]]).pack()
+
+
+def edit_button(app: dict) -> OpenAppButton:
+    """Экран «Данные компании» в мини-приложении (диплинк profile_edit)."""
+    return OpenAppButton(text="✏️ Исправить в приложении", **app, payload="profile_edit")
 
 
 def question_keyboard(question: str, legal_entity: bool):
@@ -114,7 +131,9 @@ async def find_user(db, max_user_id: int) -> User | None:
 
 
 async def obligations_summary(inn: str) -> str:
-    today = date.today()
+    """Итог онбординга — коротко: сколько обязанностей и ближайший срок. Список, календарь, документы
+    и льготы — в мини-приложении."""
+    today = today_msk()
     async with SessionLocal() as db:
         profile = await worker.load_profile(db, inn)
         events = list(await db.scalars(
@@ -123,18 +142,15 @@ async def obligations_summary(inn: str) -> str:
                    RadarEvent.status == "open", RadarEvent.due >= today)
             .order_by(RadarEvent.due)
         ))
-    titles = list(dict.fromkeys(event.payload["title"] for event in events))
-    lines = [f"📡 <b>Радар настроен: {len(titles)} {plural(len(titles), 'обязанность', 'обязанности', 'обязанностей')}</b>"]
-    lines += [f"• {title}" for title in titles]
+    count = len({event.payload["code"] for event in events})
+    lines = [f"📡 <b>Радар настроен: {count} {plural(count, 'обязанность', 'обязанности', 'обязанностей')}</b>"]
     if events:
-        lines += ["", "<b>Ближайшие сроки</b>"]
-        lines += [f"• {date_short(e.due)} — {e.payload['title']} ({e.payload['period'][:1].lower()}{e.payload['period'][1:]})" for e in events[:5]]
-    benefits = profile.headcount_benefits()
-    if benefits:
-        lines += ["", "<b>Доступно при вашей численности</b>"]
-        lines += [f'• <a href="{b.url}">{b.title}</a> ({b.basis})' for b in benefits]
-    lines += ["", "Напомню заранее и буду напоминать после срока, пока задача не закрыта. "
-                  "Изменился режим или численность — /profile. Другая компания — пришлите её ИНН."]
+        first = events[0]
+        lines.append(f"Ближайший срок — {date_short(first.due)}: {first.payload['title']} ({decap(first.payload['period'])}).")
+    if profile.tax_regime == "psn" and not (profile.patent_from and profile.patent_to):
+        lines.append("Укажите срок патента в «Данных компании» — посчитаю даты оплаты.")
+    lines += ["", "Список, календарь и документы — в приложении. Когда выйдет закон, подойдёт срок или "
+                  "изменится запись в реестре — пришлю сюда коротко."]
     return "\n".join(lines)
 
 
@@ -189,6 +205,9 @@ async def start(max_user_id: int, context: BaseContext) -> None:
     async with SessionLocal() as db:
         user = await find_user(db, max_user_id)
         connected = user is not None and await current_business(db, user.id) is not None
+        if user is not None and not user.is_active:  # снова запустил бота после блокировки — пишем снова
+            user.is_active = True
+            await db.commit()
     if not connected:
         await context.set_state(OrderState.waiting_for_inn)
     await next_step(max_user_id)
@@ -216,10 +235,10 @@ async def on_profile(event: MessageCreated):
     if business is None:
         await say(max_user_id, ASK_INN)
         return
+    app = await bot_app()
     await say(max_user_id, company_card(business, profile), ButtonsPayload(buttons=[
-        [CallbackButton(text="Изменить режим налогообложения", payload="ask:regime")],
-        [CallbackButton(text="Изменить численность", payload="ask:staff")],
-        [OpenAppButton(text="Открыть ленту обязанностей", **await bot_app())],
+        [OpenAppButton(text="✏️ Изменить данные", **app, payload="profile_edit")],
+        [OpenAppButton(text="Открыть приложение", **app)],
     ]).pack())
 
 # @dp.message_created(Command("demo_mode"))
@@ -246,14 +265,16 @@ if DEBUG:
         await event.message.answer(await worker.demo_law(event.message.sender.user_id))
 
     async def show_profile(max_user_id: int) -> None:
-        """Шаг тура «Профиль и обязанности»: то же, что бот присылает после ИНН и ответов на вопросы."""
+        """Шаг тура «Регистрация»: та же карточка «Всё верно?», что после ИНН."""
         async with SessionLocal() as db:
             user = await find_user(db, max_user_id)
             business = await current_business(db, user.id)
-            profile = await worker.load_profile(db, business.inn)
-        app = app_keyboard(await bot_app())
-        await say(max_user_id, "Нашли вашу компанию:\n" + company_card(business, profile), app)
-        await say(max_user_id, await obligations_summary(business.inn), app)
+        await show_found(max_user_id, business)
+
+    @dp.message_created(Command("laws"))
+    async def on_laws(event: MessageCreated):
+        """Проверка ленты законов: что бот отобрал за неделю и почему."""
+        await say(event.message.sender.user_id, await worker.laws_report())
 
     # полный демо-сценарий по шагам (notifications/demo.py)
     @dp.message_created(Command("demo"))
@@ -299,15 +320,41 @@ async def on_inn(event: MessageCreated, context: BaseContext):
 
     # пришел корректный ИНН
     max_user_id = event.message.sender.user_id
-    business = await _save_business(max_user_id, event.message.sender, record)
+    try:
+        business = await _save_business(max_user_id, event.message.sender, record)
+    except CompanyTaken:
+        await event.message.answer(
+            "Эту компанию уже подключил другой пользователь MAX. Одну компанию ведёт один аккаунт — иначе "
+            "посторонний мог бы менять её профиль и задачи. В рабочей версии владелец будет подтверждаться "
+            "через Госуслуги. Пришлите другой ИНН:")
+        return
     await worker.registry_loaded(inn, asdict(record))
     _start_radar(str(inn))
 
     await context.set_state(None)
+    await show_found(max_user_id, business)
+
+
+async def show_found(max_user_id: int, business: Business) -> None:
+    """Всё, что нашли о компании, и «Всё верно?»: «Да» — вопросы профиля в чате, «Исправить» — экран
+    «Данные компании» в приложении (оттуда можно поправить и позже). Очередь ждёт ответа на карточку."""
     async with SessionLocal() as db:
-        profile = await worker.load_profile(db, inn)
-    await say(max_user_id, "Нашли вашу компанию:\n" + company_card(business, profile), app_keyboard(await bot_app()))
-    await next_step(max_user_id)
+        profile = await worker.load_profile(db, business.inn)
+    app = await bot_app()
+    keyboard = ButtonsPayload(buttons=[[CallbackButton(text="✅ Да, всё верно", payload="reg:ok")],
+                                       [edit_button(app)]]).pack()
+    mid = await say(max_user_id, "Нашли вашу компанию:\n" + company_card(business, profile) + "\n\nВсё верно?", keyboard)
+    await worker.hold(max_user_id, mid)
+
+
+@dp.message_callback(F.callback.payload == "reg:ok")
+async def on_registration_ok(event: MessageCallback):
+    """Данные верны: карточку убираем, дальше — вопросы профиля или итог."""
+    await event.answer(notification="Отлично")
+    max_user_id = event.callback.user.user_id
+    await worker.answered(max_user_id, message_id(event), release=False)
+    if not await next_step(max_user_id):
+        await worker.dispatch()
 
 
 # ИНН без /start: состояние бота живёт в памяти и сбрасывается при перезапуске
@@ -380,7 +427,7 @@ async def on_flag(event: MessageCallback):
 
 @dp.message_callback(F.callback.payload.startswith("ev:"))
 async def on_event_action(event: MessageCallback):
-    """Кнопки под напоминанием: ev:<ids>:done|snooze1d|mute (radar.render.keyboard)."""
+    """Кнопки под пушем: ev:<ids>:list|done|mute (radar.render.keyboard; snooze1d — у старых сообщений)."""
     _, ids, action = event.callback.payload.split(":")
     answer = await worker.apply_action(event.callback.user.user_id, [int(i) for i in ids.split(",")], action)
     await event.answer(notification=answer)

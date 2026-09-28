@@ -27,7 +27,6 @@ import requests
 import logging
 
 logger = logging.getLogger(__name__)
-logging.getLogger().setLevel(logging.INFO)
 
 
 SEARCH_URL = "https://rmsp.nalog.ru/search-proc.json"
@@ -114,26 +113,8 @@ def fetch_by_inn(inn: str) -> RmspRecord | None:
     # logger.info(f'Ответ rmsp.nalog.ru для ИНН {inn}: {rows}')
     return RmspRecord.from_api(rows[0]) if rows else None
 
-def fetch_raw_inn(inn): # тестовая фунция - убрать в проде
-    """Fetch raw JSON data from rmsp.nalog.ru for a given INN."""
-    resp = requests.post(
-        SEARCH_URL,
-        headers=HEADERS,
-        data={
-            "mode": "inn-list",
-            "page": "1",
-            "pageSize": "100",
-            "sortField": "",
-            "innList": inn,
-        },
-        timeout=15,
-    )
-    resp.raise_for_status()
-    return resp.json()['data']
-
 if __name__ == "__main__":
     import sys
 
     for arg in sys.argv[1:]:
         print(fetch_by_inn(arg))
-        # print(fetch_raw_inn(arg))

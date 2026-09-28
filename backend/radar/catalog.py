@@ -60,20 +60,14 @@ _TYPES = [
               Severity.CRITICAL, Delivery.IMMEDIATE, kind="condition", repeat_days=30),
     EventType("msp.category_changed", "Изменилась категория МСП",
               Severity.WARNING, Delivery.IMMEDIATE, remind_before=(14, 3)),
-    EventType("msp.flags_changed", "Изменились признаки в реестре МСП",
-              Severity.INFO, Delivery.DIGEST),
     # --- Новые законы с pravo.gov.ru (radar/laws.py); срок — вступление в силу, если оно впереди ---
     EventType("law.upcoming", "Вышел акт, который вас касается",
               Severity.WARNING, Delivery.IMMEDIATE, remind_before=(7, 0)),
     EventType("profile.question", "Уточняющий вопрос", Severity.INFO, Delivery.IMMEDIATE),
     # --- Ежедневные проверки по внешним сервисам ---
-    EventType("bank.blocked", "Операции по счёту приостановлены",
-              Severity.CRITICAL, Delivery.IMMEDIATE, kind="condition", repeat_days=3),
     EventType("inspection.planned", "Запланирована проверка",
               Severity.WARNING, Delivery.IMMEDIATE, remind_before=(30, 7, 1)),
     EventType("inspection.warning", "Объявлено предостережение", Severity.WARNING, Delivery.IMMEDIATE),
-    EventType("cert.expiring", "Истекает сертификат или декларация",
-              Severity.WARNING, Delivery.IMMEDIATE, remind_before=(60, 30, 7)),
     # --- Календарь ---
     EventType("deadline", "Срок отчётности или уплаты",
               Severity.WARNING, Delivery.IMMEDIATE, remind_before=(3, 1, 0, -1)),

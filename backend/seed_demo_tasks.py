@@ -6,12 +6,13 @@ materialize_for) — чтобы на демо были просроченная 
 """
 import asyncio
 import sys
-from datetime import date, timedelta
+from datetime import timedelta
 
 from sqlalchemy import delete
 
 from databases import SessionLocal, init_db
 from notifications.models import RadarEvent
+from notifications.planner import today_msk
 
 # (сдвиг срока от сегодня в днях, статус, payload в формате сроков из шаблона deadline.group)
 DEMO = [
@@ -38,7 +39,7 @@ DEMO = [
 
 async def main(inn: str) -> None:
     await init_db()
-    today = date.today()
+    today = today_msk()
     async with SessionLocal() as db:
         await db.execute(delete(RadarEvent).where(RadarEvent.key.like(f"demo:{inn}:%")))
         for i, (shift, status, payload) in enumerate(DEMO):

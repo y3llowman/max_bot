@@ -23,7 +23,8 @@ class RegistrySnapshot(Base):
 
 
 class BusinessProfile(Base):
-    """То, чего нет в реестрах: спрашиваем в онбординге (2 вопроса кнопками)."""
+    """То, чего нет в реестрах (режим, численность, признаки), и поправки пользователя к реестру —
+    из вопросов бота и экрана «Данные компании» в мини-приложении. Поправка важнее реестра; пусто — берём реестр."""
     __tablename__ = "business_profiles"
     inn: Mapped[str] = mapped_column(String(12), ForeignKey("businesses.inn"), primary_key=True)
     tax_regime: Mapped[str | None] = mapped_column(String(16), nullable=True)
@@ -32,6 +33,11 @@ class BusinessProfile(Base):
     flags: Mapped[dict] = mapped_column(JSONB, default=dict)       # {"works_with_selfemployed": true, ...}
     bank_biks: Mapped[list] = mapped_column(JSONB, default=list)   # для проверки блокировок в «БАНКИНФОРМ»
     answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    okved_main: Mapped[str | None] = mapped_column(String(20), nullable=True)   # поправка основного ОКВЭД
+    region_code: Mapped[str | None] = mapped_column(String(2), nullable=True)   # поправка региона
+    has_licenses: Mapped[bool | None] = mapped_column(Boolean, nullable=True)   # поправка признака лицензий
+    patent_from: Mapped[date | None] = mapped_column(Date, nullable=True)       # срок патента (ПСН)
+    patent_to: Mapped[date | None] = mapped_column(Date, nullable=True)
 
 
 class LawRecord(Base):
@@ -62,6 +68,7 @@ class RadarEvent(Base):
     payload: Mapped[dict] = mapped_column(JSONB, default=dict)
     due: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(String(12), default="open")  # open|done|snoozed|muted
+    in_list: Mapped[bool] = mapped_column(Boolean, default=False)  # «В список дел»: задача в приложении и без срока
     snoozed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

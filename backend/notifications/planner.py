@@ -16,6 +16,11 @@ from pydantic.alias_generators import to_camel
 MSK = ZoneInfo("Europe/Moscow")
 REMIND_HOUR = 9  # напоминания уходят в 09:00 по Москве
 
+
+def today_msk() -> date:
+    """«Сегодня» по Москве: контейнер живёт в UTC, и с 00:00 до 03:00 МСК date.today() отставал бы на день."""
+    return datetime.now(MSK).date()
+
 REMIND_OFFSETS: dict[str, tuple[int, ...]] = {
     "d30-7-1": (30, 7, 1, 0),
     "d7-3-1": (7, 3, 1, 0),

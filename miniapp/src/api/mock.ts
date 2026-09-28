@@ -4,7 +4,9 @@
 // в адресе — состояния загрузки, пустого экрана и ошибки из макетов.
 import { config } from "../utils/config";
 import { load, save } from "../utils/storage";
-import type { Company, DashboardData, NotificationSettings, Task, TaskDetails, TaskSection } from "./types";
+import type {
+  Company, DashboardData, DatedTask, FeedItem, NotificationSettings, ProfileForm, Task, TaskDetails, TaskSection,
+} from "./types";
 import { ApiError, type Api } from "./contract";
 
 const LATENCY = 450;
@@ -58,7 +60,62 @@ const tasks: Task[] = [
   { id: "enp-2605", title: "Уплата ЕНП", subtitle: "Налоги и взносы · 168 300 ₽", status: "done", due: "2026-05-28" },
   { id: "ndfl-notice-2205", title: "Уведомление по НДФЛ", subtitle: "23.04–22.05 · КНД 1110355", status: "done", due: "2026-05-25" },
   { id: "sfr-personal-04", title: "Персонифицированные сведения", subtitle: "За апрель · СФР", status: "done", due: "2026-05-12" },
+  // без срока: на главной — только после «В список дел»
+  { id: "msp-not-found", title: "Компании нет в реестре МСП", subtitle: "Реестр МСП", status: "planned" },
+  { id: "law-kkt-400", title: "Федеральный закон от 24.07.2026 № 400-ФЗ", subtitle: "О применении контрольно-кассовой техники", status: "planned" },
 ];
+
+// «В список дел», сделанные в этой сессии; msp-not-found — уже в списке, чтобы был виден раздел «Без срока»
+const listed = new Set<string>(["msp-not-found"]);
+
+const feedItems: FeedItem[] = [
+  { id: "law-kkt-400", title: "Федеральный закон от 24.07.2026 № 400-ФЗ", subtitle: "О применении контрольно-кассовой техники", sentAt: "2026-07-22T09:00:00", status: "open", listed: false, severity: "warning" },
+  { id: "ndfl-notice-2207", title: "Уведомление по НДФЛ", subtitle: "23.06–22.07 · КНД 1110355", sentAt: "2026-07-21T09:00:00", due: "2026-07-22", status: "open", listed: false, severity: "warning" },
+  { id: "msp-not-found", title: "Компании нет в реестре МСП", subtitle: "Реестр МСП", sentAt: "2026-07-20T09:00:00", status: "open", listed: true, severity: "warning" },
+  { id: "req-12-45-3817", title: "Ответ на требование ФНС", subtitle: "№ 12-45/3817 · пояснения", sentAt: "2026-07-15T09:00:00", due: "2026-07-20", status: "open", listed: false, severity: "critical" },
+  { id: "usn-advance-h1", title: "Аванс по УСН", subtitle: "За полугодие · 96 400 ₽", sentAt: "2026-07-14T09:00:00", due: "2026-07-15", status: "done", listed: false, severity: "warning" },
+];
+
+let profile: ProfileForm = {
+  isLegalEntity: true,
+  regime: "usn_ie",
+  headcount: "36",
+  okved: "46.90",
+  registryOkved: "46.90 — Торговля оптовая неспециализированная",
+  region: "77",
+  registryRegion: "Москва",
+  hasLicenses: false,
+  flags: { cash_register: true, marked_goods: null, marketplace_seller: false, works_with_selfemployed: null, gov_procurement: null, foreign_workers: null },
+  options: {
+    regimes: [
+      { value: "osno", label: "ОСНО" },
+      { value: "usn_income", label: "УСН доходы" },
+      { value: "usn_ie", label: "УСН доходы минус расходы" },
+      { value: "ausn", label: "АУСН" },
+    ],
+    headcounts: [
+      { value: "0", label: "Нет сотрудников" },
+      { value: "1", label: "1–15 человек" },
+      { value: "16", label: "16–25 человек" },
+      { value: "26", label: "26–35 человек" },
+      { value: "36", label: "36–100 человек" },
+      { value: "101", label: "Больше 100 человек" },
+    ],
+    regions: [
+      { value: "77", label: "Москва" },
+      { value: "78", label: "Санкт-Петербург" },
+      { value: "16", label: "Республика Татарстан" },
+    ],
+    flags: [
+      { value: "cash_register", label: "Принимаем оплату через кассу (ККТ)" },
+      { value: "marked_goods", label: "Продаём или производим маркированные товары" },
+      { value: "marketplace_seller", label: "Продаём через маркетплейсы" },
+      { value: "works_with_selfemployed", label: "Работаем с самозанятыми" },
+      { value: "gov_procurement", label: "Участвуем в госзакупках" },
+      { value: "foreign_workers", label: "Есть работники-иностранцы" },
+    ],
+  },
+};
 
 const vatSections: TaskSection[] = [
   {
@@ -175,7 +232,7 @@ export const mockApi: Api = {
           soon: all.filter((t) => t.status === "soon").length,
           done: all.filter((t) => t.status === "done").length,
         },
-        tasks: all.filter((t) => t.status !== "done"),
+        tasks: all.filter((t) => t.status !== "done" && (t.due || listed.has(t.id))),
         nextDue: "2026-08-25",
         unread,
         savedAt: mockNow(),
@@ -193,12 +250,13 @@ export const mockApi: Api = {
         heading: isVat ? "Декларация по НДС за II квартал" : t.title,
         periodicity: isVat ? "Ежеквартально" : undefined,
         document: t.id.startsWith("ndfl-notice"),
+        listed: listed.has(t.id),
         sections: isVat ? vatSections : genericSections(t),
         submittedNote: isVat ? "Отмечено как поданное. Напомним об оплате 28 июля" : "Отмечено как выполненное",
         done: isVat
           ? { title: "Готово, декларация принята", text: "Налоговая приняла декларацию по НДС 25 июля в 14:05. Квитанция сохранена в разделе «Документы»." }
           : { title: "Готово", text: "Задача отмечена как выполненная. О следующем сроке напомним в чате MAX." },
-        next: tasks.map(withStatus).find((n) => n.status !== "done" && n.id !== t.id && n.due >= t.due),
+        next: t.due ? tasks.map(withStatus).find((n) => n.status !== "done" && n.id !== t.id && n.due && n.due >= t.due!) : undefined,
       };
     }),
 
@@ -207,7 +265,7 @@ export const mockApi: Api = {
     delay(() =>
       tasks
         .map(withStatus)
-        .filter((t) => t.due >= from && t.due <= to)
+        .filter((t): t is DatedTask => !!t.due && t.due >= from && t.due <= to)
         .filter((t) => config.forcedState !== "empty" || t.due >= "2026-08-25"),
     ),
 
@@ -246,13 +304,41 @@ export const mockApi: Api = {
   },
 
   generateDocument: () => ok(undefined),
+
+  feed: () =>
+    delay(() => feedItems.map((f) => ({ ...f, listed: listed.has(f.id), status: submitted.has(f.id) ? "done" as const : f.status }))),
+
+  profileForm: () => delay(() => profile),
+
+  saveProfile: (update) => {
+    profile = {
+      ...profile,
+      regime: update.regime ?? undefined,
+      headcount: update.headcount ?? undefined,
+      okved: update.okved,
+      region: update.region,
+      hasLicenses: update.hasLicenses,
+      flags: update.flags,
+      patentFrom: update.patentFrom ?? undefined,
+      patentTo: update.patentTo ?? undefined,
+    };
+    const regime = profile.options.regimes.find((r) => r.value === update.regime)?.label ?? "Режим не указан";
+    const c = { ...(load<Company>(SESSION_KEY) ?? company), regime, needsAnswers: !update.regime };
+    save(SESSION_KEY, c);
+    return ok(c);
+  },
+
+  addToList: (id) => {
+    listed.add(id);
+    return ok(undefined);
+  },
 };
 
 /** Для S3: если в mock-режиме форсирована ошибка, а сохранённой версии нет — подкладываем её. */
 export function seedMockCache(): DashboardData {
   return {
     counters: { overdue: 1, soon: 2, done: 12 },
-    tasks: tasks.filter((t) => t.status !== "done"),
+    tasks: tasks.filter((t) => t.status !== "done" && t.due),
     nextDue: "2026-08-25",
     unread: true,
     savedAt: "2026-07-21T18:40:00",

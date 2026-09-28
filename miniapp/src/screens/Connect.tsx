@@ -52,6 +52,9 @@ export function Connect() {
       const code = e instanceof ApiError ? e.code : "server";
       if (code === "not_found") {
         setServerError("Не нашли компанию с таким ИНН в реестре ФНС — проверьте цифры");
+      } else if (code === "conflict") {
+        // одну компанию ведёт один аккаунт; в рабочей версии владельца подтвердим через Госуслуги
+        setServerError("Эту компанию уже подключил другой пользователь MAX");
       } else {
         const text = code === "unavailable" ? "Реестр ФНС не отвечает — попробуйте через пару минут"
           : code === "network" ? "Нет соединения — проверьте интернет и попробуйте ещё раз"

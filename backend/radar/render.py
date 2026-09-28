@@ -79,7 +79,12 @@ def cap1(s: str) -> str:
     return s[:1].upper() + s[1:] if s else s
 
 
-env.filters.update(cap1=cap1, date_ru=date_ru, date_short=date_short, rel=rel, fio=fio,
+def decap(s: str) -> str:
+    """Строчная — только первая буква: «За III квартал» → «за III квартал» (римские цифры не трогаем)."""
+    return s[:1].lower() + s[1:] if s else s
+
+
+env.filters.update(cap1=cap1, decap=decap, date_ru=date_ru, date_short=date_short, rel=rel, fio=fio,
                    fio_short=fio_short, plural=plural, as_date=as_date)
 
 
@@ -117,23 +122,15 @@ def render(template: str, ctx: dict) -> str:
 
 
 # ----------------------------------------------------------------- клавиатура и тело
-def keyboard(event_ids: list[int], source_url: str | None = None, docs: list | None = None,
-             app: dict | None = None) -> dict:
+def keyboard(event_ids: list[int], app: dict | None = None) -> dict:
+    """Кнопки под пушем: одно решение в чате, всё остальное — в мини-приложении («Открыть»).
+    «В список дел» — событие остаётся задачей в приложении, сообщение уходит из чата."""
     ids = ",".join(map(str, event_ids))           # payload короткий: ev:<ids>:<action>
-    rows = [[{"type": "callback", "text": "✅ Сделано", "payload": f"ev:{ids}:done"},
-             {"type": "callback", "text": "⏰ Завтра", "payload": f"ev:{ids}:snooze1d"}],
+    rows = [[{"type": "callback", "text": "📋 В список дел", "payload": f"ev:{ids}:list"},
+             {"type": "callback", "text": "✅ Сделано", "payload": f"ev:{ids}:done"}],
             [{"type": "callback", "text": "🔕 Не актуально", "payload": f"ev:{ids}:mute"}]]
-    # документы к шагу «Что сделать»: по кнопке генерируем .docx и присылаем файлом
-    for d in docs or []:
-        rows.insert(-1, [{"type": "callback", "text": f"📄 {d.button}", "payload": f"doc:{event_ids[0]}:{d.code}"}])
-    link_row = []
-    if app:  # app — bot.client.bot_app(): web_app и contact_id бота; диплинк task_<id> открывает экран задачи
-        link_row.append({"type": "open_app", "text": "Открыть", **app,
-                         "payload": f"task_{event_ids[0]}"})
-    if source_url:
-        link_row.append({"type": "link", "text": "Источник", "url": source_url})
-    if link_row:
-        rows.append(link_row)                     # link/open_app — не больше 3 в ряду
+    if app:  # app — bot.client.bot_app(): web_app и contact_id бота; диплинк task_<id> открывает экран события
+        rows[1].append({"type": "open_app", "text": "Открыть", **app, "payload": f"task_{event_ids[0]}"})
     return {"type": "inline_keyboard", "payload": {"buttons": rows}}
 
 

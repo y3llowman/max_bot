@@ -44,12 +44,52 @@ class Company(CamelModel):
     benefits: list[Benefit] = []   # льготы, которые доступны при численности компании (radar.deadlines)
 
 
+class Option(CamelModel):
+    value: str
+    label: str
+
+
+class ProfileOptions(CamelModel):
+    regimes: list[Option]
+    headcounts: list[Option]
+    regions: list[Option]
+    flags: list[Option]
+
+
+class ProfileForm(CamelModel):
+    """Экран «Данные компании»: что сейчас в профиле, что в реестре и из чего выбирать."""
+    is_legal_entity: bool
+    regime: str | None = None
+    headcount: str | None = None           # нижняя граница диапазона из ответа; None — берём реестр
+    registry_headcount: int | None = None  # среднесписочная из реестра МСП
+    okved: str
+    registry_okved: str                    # «56.10 — Деятельность ресторанов…»
+    region: str
+    registry_region: str
+    has_licenses: bool
+    flags: dict[str, bool | None]
+    patent_from: date | None = None
+    patent_to: date | None = None
+    options: ProfileOptions
+
+
+class ProfileUpdate(CamelModel):
+    regime: str | None = None
+    headcount: str | None = None           # None или «» — как в реестре
+    okved: str
+    region: str
+    has_licenses: bool
+    flags: dict[str, bool | None] = {}
+    patent_from: date | None = None
+    patent_to: date | None = None
+
+
 class Task(CamelModel):
     id: str
     title: str
     subtitle: str
     status: Literal["overdue", "soon", "planned", "done"]
-    due: date
+    due: date | None = None         # нет — событие без срока, взятое «В список дел»
     periodicity: str | None = None  # «Ежеквартально»
 
 
@@ -72,7 +112,20 @@ class TaskDetails(Task):
     heading: str
     sections: list[TaskSection]
     document: bool = False  # есть черновик для «Подготовить документ»
+    listed: bool = False    # уже «В списке дел»
     next: Task | None = None
+
+
+class FeedItem(CamelModel):
+    """Строка ленты: о чём бот писал в чат."""
+    id: str
+    title: str
+    subtitle: str
+    sent_at: datetime
+    due: date | None = None
+    status: Literal["open", "done", "muted"]
+    listed: bool
+    severity: Literal["critical", "warning", "info"]
 
 
 class Counters(CamelModel):

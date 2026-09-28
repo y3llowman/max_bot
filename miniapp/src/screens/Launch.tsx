@@ -5,14 +5,15 @@ import { useSession } from "../session";
 import { Splash } from "./Splash";
 
 /** Куда ведёт диплинк https://max.ru/<бот>?startapp=<payload>.
- *  task_<id> — задача (так бот открывает приложение из уведомления о сроке),
- *  calendar, notifications, profile — разделы. */
+ *  task_<id> — экран события (кнопка «Открыть» под пушем), profile_edit — «Данные компании»
+ *  (карточка «Нашли вашу компанию» и /profile), feed, calendar, notifications, profile — разделы. */
 function deepLinkTarget(): string {
   const p = startParam();
   if (!p) return "/tasks";
   const task = /^task_([A-Za-z0-9_-]+)$/.exec(p);
   if (task) return `/task/${task[1]}`;
-  if (p === "calendar" || p === "notifications" || p === "profile") return `/${p}`;
+  if (p === "profile_edit") return "/profile/edit";
+  if (p === "calendar" || p === "notifications" || p === "profile" || p === "feed") return `/${p}`;
   return "/tasks";
 }
 

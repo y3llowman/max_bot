@@ -10,24 +10,24 @@
   07:00 ежедневно      ingest_laws       новые акты pravo.gov.ru → каким компаниям они касаются
   09:00 ежедневно      queue_reminders   напоминания по настройкам пользователя, после срока — каждый день
   каждую минуту        dispatch          outbox (notifications) → MAX
-Заглушки, не реализованы: weekly_digest, check_banks, check_certs.
 """
 from __future__ import annotations
 
 import asyncio
 import functools
 import hashlib
+import html
 import json
 import logging
 import re
 from collections import defaultdict
 from dataclasses import asdict
 from datetime import date, datetime, time, timedelta, timezone
-from types import SimpleNamespace
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from maxapi.exceptions.max import MaxApiError
 from maxapi.types.input_media import InputMediaBuffer
 from sqlalchemy import delete, distinct, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
@@ -43,9 +43,9 @@ from radar import documents, laws
 from radar.catalog import CATALOG, Delivery, Severity
 from radar.deadlines import Profile
 from radar.obligations import BY_CODE, OBLIGATIONS, due_dates
-from radar.render import SOURCE_URLS, build_context, company_ctx, flag_keyboard, keyboard, plural, render
+from radar.render import build_context, company_ctx, flag_keyboard, keyboard, plural, render
 from .models import BusinessProfile, LawRecord, Notification, RadarEvent, RegistrySnapshot
-from .planner import MSK, REMIND_HOUR, NotificationSettings, reminder_label
+from .planner import MSK, REMIND_HOUR, NotificationSettings, reminder_label, today_msk
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +210,7 @@ async def process_inspections(inns: set[str], today: date) -> None:
 async def check_inspections() -> None:
     inns = set(await active_inns())
     if inns:
-        await process_inspections(inns, date.today())
+        await process_inspections(inns, today_msk())
 
 
 _scanning: set[str] = set()              # ИНН, по которым сейчас идёт фоновая проверка
@@ -224,7 +224,7 @@ async def scan_in_background(inn: str) -> None:
     if inn in _scanning:
         return
     _scanning.add(inn)
-    today = date.today()
+    today = today_msk()
     try:
         try:
             await process_egrul(inn, today)
@@ -254,7 +254,7 @@ EGRUL_CAPTCHA_PAUSE = 900  # с, после капчи
 async def sync_egrul() -> None:
     """Ночью по всем компаниям, растянуто: минута между выписками (сотня компаний — меньше двух часов),
     после капчи — 15 минут и повтор той же компании один раз."""
-    today = date.today()
+    today = today_msk()
     for inn in await active_inns():
         for attempt in (1, 2):
             try:
@@ -270,7 +270,7 @@ async def sync_egrul() -> None:
 
 
 async def sync_msp() -> None:
-    today = date.today()
+    today = today_msk()
     for inn in await active_inns():
         try:
             record = await asyncio.to_thread(rmsp_client.fetch_by_inn, inn)
@@ -289,21 +289,24 @@ async def sync_msp() -> None:
 
 # ---- обязанности ----------------------------------------------------------------
 async def load_profile(db: AsyncSession, inn: str) -> Profile | None:
-    """Профиль для правил, бота и мини-приложения. Численность: ответ пользователя (он мог поправить
-    её в /profile) важнее среднесписочной из реестра МСП; нет ни того, ни другого — бот спросит."""
+    """Профиль для правил, бота и мини-приложения. Поправки пользователя (численность, ОКВЭД, регион,
+    лицензии — экран «Данные компании») важнее реестра МСП, который отстаёт; нет ни того, ни другого —
+    бот спросит."""
     business = await db.get(Business, inn)
     if business is None:
         return None
-    answers = await db.get(BusinessProfile, inn)
-    answered = answers.headcount if answers else None
+    answers = await db.get(BusinessProfile, inn) or BusinessProfile(inn=inn, flags={})
+    answered = answers.headcount
     headcount = answered if answered is not None else business.employees_num
     return Profile(
-        inn=inn, is_legal_entity=business.subject_type == "UL", region_code=business.region_code,
-        okved_main=business.main_activity_code, msp_category=business.category,
-        tax_regime=answers.tax_regime if answers else None,
+        inn=inn, is_legal_entity=business.subject_type == "UL",
+        region_code=answers.region_code or business.region_code,
+        okved_main=answers.okved_main or business.main_activity_code, msp_category=business.category,
+        tax_regime=answers.tax_regime,
         has_employees=headcount > 0 if headcount is not None else None,
         headcount=headcount, headcount_exact=answered is None and headcount is not None,
-        has_licenses=business.has_licenses, flags=dict(answers.flags or {}) if answers else {},
+        has_licenses=business.has_licenses if answers.has_licenses is None else answers.has_licenses,
+        flags=dict(answers.flags or {}), patent_from=answers.patent_from, patent_to=answers.patent_to,
     )
 
 
@@ -314,7 +317,7 @@ async def materialize_for(inn: str, today: date | None = None) -> tuple[list[str
     перестали касаться компании (сменился режим или численность), удаляются.
     Возвращает (названия новых обязанностей, названия исчезнувших).
     """
-    today = today or date.today()
+    today = today or today_msk()
     code = RadarEvent.payload["code"].astext
     ours = (RadarEvent.inn == inn, RadarEvent.key.like(f"obl:{inn}:%"))
     async with SessionLocal() as db:
@@ -354,7 +357,7 @@ async def materialize_for(inn: str, today: date | None = None) -> tuple[list[str
 async def registry_loaded(inn: str, msp_record: dict) -> None:
     """После ввода ИНН или «Обновить» (бот и мини-приложение): снимок МСП — точка отсчёта для
     sync_msp (и сразу проверка изменений), затем сроки обязанностей."""
-    await process_msp(inn, msp_record, date.today())
+    await process_msp(inn, msp_record, today_msk())
     await materialize_for(inn)
 
 
@@ -388,7 +391,7 @@ async def ingest_laws(today: date | None = None, days: int = LAW_LOOKBACK_DAYS, 
     """Акты за последние days дней → таблица laws → события компаниям, которых они касаются.
     Уже разобранные пропускаем; «О внесении изменений…» без текста перепроверяем на следующий день.
     Возвращает число новых актов про бизнес."""
-    today = today or date.today()
+    today = today or today_msk()
     since = today - timedelta(days=days)
     async with SessionLocal() as db:
         known = set(await db.scalars(select(LawRecord.eo_number).where(LawRecord.published >= since)))
@@ -424,6 +427,26 @@ async def ingest_laws(today: date | None = None, days: int = LAW_LOOKBACK_DAYS, 
     if fresh and notify:
         await fan_out_laws(await active_inns(), fresh, today)
     return len(fresh)
+
+
+async def laws_report(days: int = 7) -> str:
+    """/laws (при DEBUG): что лента отобрала за неделю и по какой теме — чтобы проверить глазами."""
+    since = today_msk() - timedelta(days=days)
+    async with SessionLocal() as db:
+        total = await db.scalar(select(func.count()).select_from(LawRecord).where(LawRecord.published >= since))
+        rows = list(await db.scalars(select(LawRecord).where(LawRecord.published >= since, LawRecord.topics != [])
+                                     .order_by(LawRecord.published.desc())))
+    if not total:
+        return "За неделю актов с pravo.gov.ru ещё нет: загрузка идёт после запуска бота и каждый день в 07:00."
+    lines = [f"📚 <b>Законы за {days} дней</b>", f"Разобрано актов: {total}, про бизнес: {len(rows)}.", ""]
+    for law in rows[:20]:
+        topics = ", ".join(laws.TOPIC_RU.get(t, t) for t in law.topics) + (f"; регион {law.region}" if law.region else "")
+        lines.append(f"• {law.published:%d.%m} — {html.escape(law.name[:140])} <i>({topics})</i>")
+    if len(rows) > 20:
+        lines.append(f"…и ещё {len(rows) - 20}.")
+    lines += ["", "Акт явно не про бизнес или не той темы — пришлите его название разработчику: "
+                  "поправим словарь в radar/laws.py."]
+    return "\n".join(lines)
 
 
 async def recent_laws(today: date) -> list[laws.Law]:
@@ -476,7 +499,7 @@ async def answer_flag(max_user_id: int, flag: str, yes: bool) -> str:
         inn = business.inn
     if not yes:
         return "Запомнили: такие акты присылать не будем"
-    today = date.today()
+    today = today_msk()
     sent = await fan_out_laws([inn], await recent_laws(today), today)
     await dispatch()
     return "Запомнили — присылаем, что вышло" if sent else "Запомнили — пришлём, когда выйдет"
@@ -607,10 +630,15 @@ async def _send(db: AsyncSession, items: list[tuple[Notification, User, RadarEve
         message_id = await send_html(user.max_user_id, text, kb)
     except Exception as exc:
         logger.exception("dispatch failed for user %s", user.id)
+        unreachable = isinstance(exc, MaxApiError) and exc.code in (403, 404)
         for notification, _, _ in items:
             notification.attempts += 1
             notification.error = str(exc)[:500]
-            notification.status = "failed" if notification.attempts >= 3 else "pending"
+            notification.status = "failed" if notification.attempts >= 3 or unreachable else "pending"
+        if unreachable:  # заблокировал бота или удалил чат: не пишем, пока сам не вернётся (/start, мини-приложение)
+            user.is_active = False
+            await db.execute(update(Notification).where(Notification.user_id == user.id, Notification.status == "pending")
+                             .values(status="cancelled"))
         return
     for notification, _, e in items:
         notification.status, notification.sent_at, notification.max_message_id = "sent", now, message_id
@@ -637,14 +665,10 @@ async def _render(db: AsyncSession, items: list[tuple[Notification, User, RadarE
         ctx = build_context("deadline", {}, company, today, items=payloads, due=event.due)
     else:
         ctx = build_context(event.type, event.payload, company, today, src=event.source)
+    text = render("push." + first.template, ctx)  # коротко; подробности — на экране события в приложении
     if event.type == "profile.question":
-        return render(first.template, ctx), flag_keyboard(event.payload["flag"])
-    docs = ([SimpleNamespace(button="Подготовить документ", code=event.payload["document"])]
-            if len(events) == 1 and event.payload.get("document") else None)
-    source = SOURCE_URLS.get(event.source) or event.payload.get("source_url")
-    # «Открыть» ведёт на экран задачи, а задачи в мини-приложении — только события со сроком
-    kb = keyboard([e.id for e in events], source, docs, app=await bot_app() if event.due else None)
-    return render(first.template, ctx), kb
+        return text, flag_keyboard(event.payload["flag"])
+    return text, keyboard([e.id for e in events], app=await bot_app())
 
 
 async def queue_text(user_id: int, text: str, kb: dict, label: str) -> None:
@@ -694,7 +718,8 @@ async def user_events(db: AsyncSession, max_user_id: int, ids: list[int]) -> tup
 
 
 async def apply_action(max_user_id: int, ids: list[int], action: str) -> str:
-    """Кнопки под напоминанием: done | snooze1d | mute. Возвращает текст всплывающего ответа."""
+    """Кнопки под пушем: list | done | mute (и snooze1d у старых сообщений с «Завтра»). Возвращает
+    текст всплывающего ответа."""
     async with SessionLocal() as db:
         user, events = await user_events(db, max_user_id, ids)
         if not events:
@@ -705,6 +730,10 @@ async def apply_action(max_user_id: int, ids: list[int], action: str) -> str:
             for event in events:
                 await _queue(db, user.id, event, f"snooze:{tomorrow:%y%m%d}", at)
             answer = "Напомним завтра в 9:00"
+        elif action == "list":
+            for event in events:
+                event.in_list = True
+            answer = "Добавили в список дел — он в мини-приложении"
         else:
             for event in events:
                 event.status = "done" if action == "done" else "muted"
@@ -717,6 +746,29 @@ async def apply_action(max_user_id: int, ids: list[int], action: str) -> str:
                 answer = "Отмечено как выполненное"
         await db.commit()
     return answer
+
+
+async def handled_in_app(max_user_id: int, event_id: int) -> None:
+    """Задачу закрыли или взяли в список дел в мини-приложении — убрать пуш о ней из чата и прислать
+    следующее. Пуш о нескольких сроках одной даты остаётся, пока открыт хоть один из них."""
+    async with SessionLocal() as db:
+        user = (await db.execute(select(User).where(User.max_user_id == max_user_id))).scalar_one_or_none()
+        if user is None:
+            return
+        mids = set(await db.scalars(select(Notification.max_message_id).where(
+            Notification.user_id == user.id, Notification.event_id == event_id, Notification.status == "sent",
+            Notification.max_message_id.is_not(None))))
+        shown = []
+        for mid in mids:
+            others = await db.scalar(
+                select(func.count()).select_from(Notification).join(RadarEvent, RadarEvent.id == Notification.event_id)
+                .where(Notification.max_message_id == mid, RadarEvent.id != event_id, RadarEvent.status == "open",
+                       RadarEvent.in_list.is_(False)))
+            if not others:
+                shown.append(mid)
+    for mid in shown:
+        await answered(max_user_id, mid, release=False)
+    await dispatch()
 
 
 async def send_document(db: AsyncSession, event: RadarEvent, max_user_id: int) -> None:
@@ -762,7 +814,7 @@ async def demo_remind(max_user_id: int) -> int:
 
 async def demo_event(max_user_id: int, kind: str) -> str:
     """Имитация внешнего события: knm — проверка в ЕРКНМ, msp_excluded — исключение из реестра МСП."""
-    today = date.today()
+    today = today_msk()
     async with SessionLocal() as db:
         user = (await db.execute(select(User).where(User.max_user_id == max_user_id))).scalar_one_or_none()
         business = await current_business(db, user.id) if user else None
@@ -799,7 +851,7 @@ async def demo_law(max_user_id: int) -> str:
         business = await current_business(db, user.id) if user else None
     if business is None:
         return "Сначала подключите компанию: пришлите ИНН."
-    today = date.today()
+    today = today_msk()
     items = await recent_laws(today)
     if not items:
         return "Акты с pravo.gov.ru ещё загружаются после запуска бота — попробуйте через несколько минут."
@@ -811,12 +863,6 @@ async def demo_law(max_user_id: int) -> str:
     return f"Готово: отправили {len(new)} (акты и вопросы) из {len(items)} актов про бизнес за {LAW_RECENT_DAYS} дней."
 
 
-# ---- заглушки -------------------------------------------------------------------
-async def weekly_digest() -> None: ...
-async def check_banks() -> None: ...        # det.bank_conditions
-async def check_certs() -> None: ...        # det.cert_events
-
-
 def build_scheduler() -> AsyncIOScheduler:
     s = AsyncIOScheduler(timezone=MSK)
     s.add_job(sync_egrul, CronTrigger(hour=3, minute=0, jitter=600), id="egrul", max_instances=1)
@@ -824,9 +870,6 @@ def build_scheduler() -> AsyncIOScheduler:
     s.add_job(materialize, CronTrigger(hour=5), id="deadlines", max_instances=1)
     s.add_job(queue_reminders, CronTrigger(hour=REMIND_HOUR), id="reminders", max_instances=1)
     s.add_job(dispatch, IntervalTrigger(minutes=1), id="dispatch", max_instances=1, coalesce=True)
-    s.add_job(weekly_digest, CronTrigger(day_of_week="mon", hour=8, minute=55), id="digest")
-    s.add_job(check_banks, CronTrigger(hour=6), id="banks", max_instances=1)
     s.add_job(ingest_laws, CronTrigger(hour=7), id="laws", max_instances=1)
     s.add_job(check_inspections, CronTrigger(hour=4, minute=30), id="knm", max_instances=1)
-    s.add_job(check_certs, CronTrigger(day_of_week="mon", hour=5, minute=30), id="fsa")
     return s

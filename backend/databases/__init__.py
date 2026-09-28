@@ -18,6 +18,13 @@ NEW_COLUMNS = (
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS awaiting_since TIMESTAMPTZ",
     "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS text TEXT",
     "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS keyboard JSONB",
+    "ALTER TABLE business_profiles ADD COLUMN IF NOT EXISTS okved_main VARCHAR(20)",
+    "ALTER TABLE business_profiles ADD COLUMN IF NOT EXISTS region_code VARCHAR(2)",
+    "ALTER TABLE business_profiles ADD COLUMN IF NOT EXISTS has_licenses BOOLEAN",
+    "ALTER TABLE business_profiles ADD COLUMN IF NOT EXISTS patent_from DATE",
+    "ALTER TABLE business_profiles ADD COLUMN IF NOT EXISTS patent_to DATE",
+    "ALTER TABLE radar_events ADD COLUMN IF NOT EXISTS in_list BOOLEAN NOT NULL DEFAULT false",
+    "DROP TABLE IF EXISTS feed_items",  # прежняя лента законов, код её больше не использует
 )
 
 
