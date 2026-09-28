@@ -8,7 +8,7 @@ iOS и Android), токены и типографика — из `design/UI Kit 
 Нужен Node.js 20+.
 
 ```bash
-cd frontend
+cd miniapp
 npm install
 npm run dev
 ```
@@ -46,7 +46,7 @@ npm run build       # сборка в build/ — статика для любо�
 
 Сборка кладётся в `build/`, и есть пустой скрипт `prepare` — ровно то, что ждёт
 Dockerfile шаблона бэкенда (`npm run prepare && npm run build`, копирует `build/`).
-Поэтому папку можно поставить на место `frontend/` без правок Dockerfile.
+Корневой Dockerfile собирает эту папку и копирует `build/` в `miniapp/build`, откуда его раздаёт FastAPI.
 
 Папка утилит называется `src/utils`, а не `src/lib`: корневой `.gitignore`
 бэкенд-репозитория содержит правило `lib/` из питоновского шаблона и молча

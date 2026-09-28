@@ -1,4 +1,4 @@
-"""Ответы API мини-приложения — зеркало frontend/src/api/types.ts.
+"""Ответы API мини-приложения — зеркало miniapp/src/api/types.ts.
 
 Фронт ждёт camelCase (fullName, nextDue, updatedAt): поля описаны в snake_case,
 а наружу уходят по алиасам. Необязательные поля в контракте — `?:`, а не null,

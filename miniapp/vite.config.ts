@@ -5,7 +5,7 @@ export default defineConfig({
   // "./" — сборка открывается с любого пути статического хостинга или из-под FastAPI.
   base: "./",
   plugins: [react()],
-  // build/, а не dist/ — туда же собирает шаблон бэкенда: его Dockerfile берёт frontend/build.
+  // build/, а не dist/ — корневой Dockerfile берёт miniapp/build.
   build: { outDir: "build", emptyOutDir: true },
   server: {
     host: true,

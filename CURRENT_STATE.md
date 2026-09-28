@@ -9,9 +9,9 @@ _Обновлено: 27.09.2026 (численность из реестра МС
 | Что | Команда |
 |---|---|
 | Всё в Docker | `docker compose up --build`: postgres, API на :8000 (отдаёт и собранное мини-приложение), бот вместе с планировщиком |
-| API локально | из корня: `python backend/main.py` (`.env` читается из текущей папки; `DATABASE_URL` на localhost:5433). Статику берёт из `frontend/build` — сначала `npm run build` в `frontend/` |
+| API локально | из корня: `python backend/main.py` (`.env` читается из текущей папки; `DATABASE_URL` на localhost:5433). Статику берёт из `miniapp/build` — сначала `npm run build` в `miniapp/` |
 | Бот локально | из корня: `python backend/bot/main_longpooling.py` |
-| Мини-приложение | `cd frontend && npm run dev`. Без `VITE_API_URL` работает на моках, подробности — [frontend/README.md](frontend/README.md) |
+| Мини-приложение | `cd miniapp && npm run dev`. Без `VITE_API_URL` работает на моках, подробности — [miniapp/README.md](miniapp/README.md) |
 | Тесты | `python -m unittest discover -s tests`. Тесты с БД запускаются только при `TEST_DATABASE_URL=postgresql+asyncpg://…/пустая_база`: схему они пересоздают. Без Docker подойдёт локальный PostgreSQL: `initdb -D <папка> -U max -A trust`, `pg_ctl -D <папка> -o "-p 5544" start`, `createdb -p 5544 -U max maxtest` |
 
 Демо-сроки поверх настоящих: `python backend/seed_demo_tasks.py <ИНН>`. Добавляют просроченную и выполненную задачи.
@@ -56,7 +56,7 @@ _Обновлено: 27.09.2026 (численность из реестра МС
 
 Мёртвый код от Telegram-шаблона (`bot/sender.py`, `bot/handlers/`, RabbitMQ-воркер, роуты `mailing`/`telegram`, старый SvelteKit, `docs/BACKEND_GUIDE.md`) удалён.
 
-## Мини-приложение (`frontend/`)
+## Мини-приложение (`miniapp/`)
 
 React + Vite, экраны по макетам. Контракт — `src/api/types.ts`, моки — `src/api/mock.ts`.
 

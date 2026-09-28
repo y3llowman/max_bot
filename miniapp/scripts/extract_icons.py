@@ -1,6 +1,6 @@
 """Извлекает иконки из UI-кита дизайнера в src/components/icons.ts.
 
-Запуск из папки frontend:  python scripts/extract_icons.py [путь к UI Kit v2.svg]
+Запуск из папки miniapp:  python scripts/extract_icons.py [путь к UI Kit v2.svg]
 
 Иконки в ките — раздел «Иконки», сетка `Grid`: линейные, 24×24, обводка 1.6,
 скруглённые концы, цвет через currentColor. Экспорт Фигмы кладёт контуры в
