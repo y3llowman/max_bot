@@ -22,8 +22,8 @@ from sqlalchemy import select
 from sqlalchemy import text as sql
 
 from app.api.depends import get_current_user
-from data_fetching.rmsp_client import RmspRecord
-from databases import SessionLocal, engine, init_db
+from data_fetching.msp_open_data import MspRecord
+from databases import SessionLocal, engine, init_db, msp_registry
 from databases.businesses_db import Business, save_business
 from databases.users_db import User
 from main import app
@@ -36,7 +36,7 @@ MORNING = datetime(2026, 9, 26, 9, 0, tzinfo=MSK)
 INN = "7707083893"
 MAX_USER = 111
 BOT_APP = {"web_app": "radar_bot", "contact_id": 999}
-RECORD = RmspRecord(
+RECORD = MspRecord(
     name='ООО "СЕВЕРНЫЙ ВЕТЕР"', subject_type="UL", category=1, ogrn="1027700132195", inn=INN,
     main_activity_code="41.20", main_activity_name="Строительство жилых и нежилых зданий", region_code="16",
     is_new=False, date_registered="10.08.2016 00:00:00", date_excluded=None, phone=None, email=None, website=None, employees_num=None,
@@ -56,6 +56,7 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
             db.add(user)
             await db.flush()
             await save_business(db, user.id, RECORD)
+        await msp_registry.load(iter([("10.09.2026", RECORD)]), "full", "test")
         self.send = AsyncMock(return_value="mid-1")
         self.deleted = AsyncMock()
         patches = [patch.object(worker, "send_html", self.send),
@@ -257,42 +258,19 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([n.status for n in await self.notifications() if n.label == "T-1"], ["cancelled"])
 
     async def test_background_scan_runs_once(self):
-        egrul, knm = AsyncMock(), AsyncMock()
         started = []
 
-        async def slow_egrul(inn, today):
-            started.append(inn)
+        async def slow(inns, today):
+            started.append(inns)
             await asyncio.sleep(0.05)
 
-        egrul.side_effect = slow_egrul
+        knm = AsyncMock(side_effect=slow)
         worker._erknm_checked.clear()
-        with patch.object(worker, "process_egrul", egrul), patch.object(worker, "process_inspections", knm):
+        with patch.object(worker, "process_inspections", knm):
             await asyncio.gather(worker.scan_in_background(INN), worker.scan_in_background(INN))
             self.assertEqual(len(started), 1, "пока идёт проверка, вторая не запускается")
             await worker.scan_in_background(INN)
-        self.assertEqual(egrul.await_count, 2)
         self.assertEqual(knm.await_count, 1, "ЕРКНМ по одному ИНН — раз в день")
-
-    async def test_egrul_unreliable_mark_and_its_removal(self):
-        marked = {"inn": INN, "notes": [{"section": "Место нахождения и адрес юридического лица",
-                                         "text": "сведения недостоверны", "date": "19.08.2026"}]}
-        with patch.object(worker, "fetch_egrul", AsyncMock(return_value=marked)):
-            await worker.process_egrul(INN, TODAY)
-            await worker.process_egrul(INN, TODAY)
-        [event] = await self.events(type="egrul.unreliable")
-        self.assertEqual(event.due, date(2027, 2, 19))
-        await worker.dispatch()
-        self.send.assert_awaited_once()
-        self.assertIn("Недостоверные сведения в ЕГРЮЛ", self.send.await_args.args[1])
-
-        with patch.object(worker, "fetch_egrul", AsyncMock(return_value={"inn": INN, "notes": []})):
-            await worker.process_egrul(INN, TODAY)
-        self.assertIsNotNone((await self.events(type="egrul.unreliable"))[0].resolved_at)
-        await worker.dispatch()
-        self.send.assert_awaited_once()
-        await self.reply()
-        self.deleted.assert_awaited_once_with("mid-1")
-        self.assertIn("Отметку о недостоверности сняли", self.send.await_args.args[1])
 
     async def test_inspections_from_erknm(self):
         from data_fetching.erknm_client import Knm
@@ -350,12 +328,8 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
                 "Об установлении налоговой ставки по налогу, взимаемому в связи с применением упрощенной системы "
                 "налогообложения", "subjects"),
         ]
-        texts = {"0001202609250002": "Статья 1\nВнести в Федеральный закон от 22 мая 2003 года № 54-ФЗ "
-                                     "\"О применении контрольно-кассовой техники\" следующие изменения:\nСтатья 2\n"
-                                     "Настоящий Федеральный закон вступает в силу с 1 марта 2027 года."}
         pdf = b"%PDF-1.4 test"
         with patch.object(worker.pravo_client, "published", lambda d: acts if d == day else []), \
-                patch.object(worker.pravo_client, "text", texts.get), \
                 patch.object(worker.pravo_client, "find_act", lambda *args: None), \
                 patch.object(worker.pravo_client, "pdf", lambda eo: pdf), \
                 patch.object(worker.bot, "send_message", AsyncMock()) as send_file:
@@ -376,20 +350,24 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Почему вам: вы на УСН доходы.", text)
             buttons = [b for row in kb["payload"]["buttons"] for b in row]
             self.assertEqual([b.get("payload") for b in buttons],
-                             [f"ev:{law.id}:list", f"ev:{law.id}:done", f"ev:{law.id}:mute", f"task_{law.id}"])
+                             [f"ev:{law.id}:list", f"ev:{law.id}:done", f"ev:{law.id}:mute", f"task_{law.id}", None])
+            self.assertEqual((buttons[-1]["type"], buttons[-1]["url"]),
+                             ("link", "http://publication.pravo.gov.ru/document/0001202609250001"))
             _, text, kb = next(args for title, args in texts_sent.items() if "кассу" in title)
             self.assertEqual([b["payload"] for b in kb["payload"]["buttons"][0]],
                              ["flag:cash_register:yes", "flag:cash_register:no"])
+            self.assertEqual(send_file.await_count, 0, "PDF не скачиваем, пока не включён LAW_PDF")
+
+            with patch.object(worker, "LAW_PDF", True):
+                self.assertEqual(await worker.answer_flag(MAX_USER, "cash_register", True), "Запомнили — присылаем, что вышло")
+                await self.reply()
+            [kkt] = [e for e in await self.events(type="law.upcoming") if e.payload["eo"] == "0001202609250002"]
+            self.assertIsNone(kkt.due, "дата вступления в силу — только из текста, а текста в документированном API нет")
+            self.assertEqual((await self.events(type="profile.question"))[0].status, "done")
             [pdf_call] = send_file.await_args_list
             media = pdf_call.kwargs["attachments"][0]
-            self.assertEqual((media.buffer, media.filename), (pdf, "Приказ Федеральной налоговой службы от 20.08.2026 N ЕД-7-3555.pdf"))
-
-            self.assertEqual(await worker.answer_flag(MAX_USER, "cash_register", True), "Запомнили — присылаем, что вышло")
-            await self.reply()
-            [kkt] = [e for e in await self.events(type="law.upcoming") if e.payload["eo"] == "0001202609250002"]
-            self.assertEqual(kkt.due, date(2027, 3, 1))
-            self.assertEqual((await self.events(type="profile.question"))[0].status, "done")
-            self.assertEqual(send_file.await_count, 2)
+            self.assertEqual((media.buffer, media.filename),
+                             (pdf, "Федеральный закон от 24.09.2026 N 400-ФЗ.pdf"))
 
             self.assertEqual(await worker.ingest_laws(TODAY), 0, "разобранные акты второй раз не рассылаются")
             self.assertEqual(await worker.answer_flag(MAX_USER, "marked_goods", False),
@@ -414,17 +392,15 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         app.dependency_overrides[get_current_user] = lambda: user
         self.addCleanup(app.dependency_overrides.clear)
         next_step, scan = AsyncMock(), AsyncMock()
-        with patch.object(company_routes.rmsp_client, "fetch_by_inn", lambda inn: RECORD),                 patch.object(bot_flow, "next_step", next_step), patch.object(company_routes, "scan_in_background", scan):
+        with patch.object(bot_flow, "next_step", next_step), patch.object(company_routes, "scan_in_background", scan):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 self.assertEqual((await client.post("/api/session", json={"inn": INN})).status_code, 200)
         next_step.assert_awaited_once_with(MAX_USER)
         scan.assert_awaited_once_with(INN)
 
-        def down(inn):
-            raise ConnectionError("rmsp.nalog.ru timeout")
-        with patch.object(company_routes.rmsp_client, "fetch_by_inn", down):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                self.assertEqual((await client.post("/api/session", json={"inn": INN})).status_code, 503)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            missing = await client.post("/api/session", json={"inn": "7743212897"})
+        self.assertEqual((missing.status_code, missing.json()["detail"]), (404, "INN not found in the SME registry"))
 
     async def test_demo_tour_covers_every_step_and_cleans_up(self):
         from notifications import demo as tour
@@ -463,7 +439,7 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(waited, "у шагов с несколькими сообщениями есть «Ещё N — пришлю по одному»")
             shown.assert_awaited_once()
             self.assertEqual(kb["payload"]["buttons"][-1][0]["payload"], "demo:clean")
-            self.assertEqual(files.await_count, 1, "PDF закона; документы — по кнопке, не пачкой")
+            self.assertEqual(files.await_count, 0, "PDF закона не качаем без LAW_PDF; документы — по кнопке, не пачкой")
 
             texts = "\n".join(call.args[1] for call in self.send.await_args_list)
             for expected in ("Запланирована проверка", "Запланирован профилактический визит", "предостережение",
@@ -569,12 +545,42 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         await self.answer("usn_ie", 1)
         notice = next(e for e in await self.events() if e.payload.get("code") == "usn_notice")
         async with SessionLocal() as db:
+            answers = await db.get(BusinessProfile, INN)
+            answers.kpp, answers.address = "165001001", "423800, г. Набережные Челны, пр. Мира, д. 1"
+            await db.commit()
+        async with SessionLocal() as db:
             with patch.object(worker.bot, "send_message", AsyncMock()) as send_message:
                 await worker.send_document(db, notice, MAX_USER)
         doc = Document(io.BytesIO(send_message.await_args.kwargs["attachments"][0].buffer))
         cells = [c.text for t in doc.tables for row in t.rows for c in row.cells]
         self.assertIn(INN, cells)
+        self.assertIn("165001001", cells)
+        self.assertIn("423800, г. Набережные Челны, пр. Мира, д. 1", cells)
         self.assertIn("18210501021011000110", cells)
+
+    async def test_registry_slice_is_honest_about_missing_companies(self):
+        from bot import message_handler as bot_flow
+        from data_fetching import msp_open_data
+        await msp_registry.load(msp_open_data.read_slice(), "slice", msp_open_data.SLICE.name)
+        self.assertFalse(await msp_registry.is_complete())
+        manilla = await msp_registry.find("7743212897")
+        self.assertEqual((manilla.subject_type, manilla.main_activity_code[:5], manilla.region_code), ("UL", "56.10", "77"))
+        self.assertIsNotNone(await msp_registry.find("3666155612"))
+        self.assertIsNone(await msp_registry.find("7707083893"))
+        text = await bot_flow.not_in_registry("7707083893")
+        self.assertIn("нет в срезе реестра МСП", text)
+        self.assertIn("срез открытых данных ФНС на 10.09.2026", text)
+
+        client = await self.api()
+        missing = await client.post("/api/session", json={"inn": "7707083893"})
+        self.assertEqual((missing.status_code, missing.json()["detail"]),
+                         (404, "INN not found in the SME registry slice loaded in this MVP"))
+        from app.api.routes import company as company_routes
+        with patch.object(company_routes, "scan_in_background", AsyncMock()):
+            self.assertEqual((await client.post("/api/company/refresh")).status_code, 200)
+        self.assertEqual(await self.events(source="msp"), [], "компании нет в срезе — это не «исключена из реестра»")
+        company = (await client.get("/api/company")).json()
+        self.assertIn("срез открытых данных ФНС", company["source"]["name"])
 
     async def test_migrations_match_models_and_adopt_old_database(self):
         from alembic.autogenerate import compare_metadata
@@ -587,13 +593,16 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         async with engine.connect() as conn:
             self.assertEqual(await conn.run_sync(diff), [])
         async with engine.begin() as conn:
-            await conn.execute(sql("DROP TABLE alembic_version"))
-            await conn.execute(sql("ALTER TABLE users ALTER COLUMN max_user_id TYPE integer"))
+            for statement in ("DROP TABLE alembic_version", "DROP TABLE msp_registry", "DROP TABLE msp_registry_loads",
+                              "ALTER TABLE business_profiles DROP COLUMN kpp, DROP COLUMN address, "
+                              "DROP COLUMN director_position, DROP COLUMN director_name",
+                              "ALTER TABLE users ALTER COLUMN max_user_id TYPE integer"):
+                await conn.execute(sql(statement))
         await init_db()
         await init_db()
         async with engine.connect() as conn:
             self.assertEqual(await conn.run_sync(diff), [])
-            self.assertEqual((await conn.execute(sql("SELECT version_num FROM alembic_version"))).scalar(), "0002")
+            self.assertEqual((await conn.execute(sql("SELECT version_num FROM alembic_version"))).scalar(), "0003")
         async with SessionLocal() as db:
             db.add(User(max_user_id=9_000_000_000_000_000_001))
             await db.commit()
@@ -616,7 +625,10 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await client.post("/api/session", json={"inn": "123"})).status_code, 422)
 
         from app.api.routes import company as company_routes
-        with patch.object(company_routes.rmsp_client, "fetch_by_inn", lambda inn: None),                 patch.object(company_routes, "scan_in_background", AsyncMock()) as scan:
+        async with SessionLocal() as db:
+            await db.execute(sql("DELETE FROM msp_registry WHERE inn = :inn"), {"inn": INN})
+            await db.commit()
+        with patch.object(company_routes, "scan_in_background", AsyncMock()) as scan:
             company = await client.post("/api/company/refresh")
         scan.assert_awaited_once_with(INN)
         self.assertEqual((company.status_code, company.json()["inn"]), (200, INN))
@@ -688,7 +700,6 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue((await db.execute(select(User))).scalar_one().is_active)
 
     async def test_one_company_one_user(self):
-        from app.api.routes import company as company_routes
         from databases.businesses_db import CompanyTaken
         async with SessionLocal() as db:
             other = User(max_user_id=222)
@@ -698,8 +709,7 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
                 await save_business(db, other.id, RECORD)
             await db.commit()
         client = await self.api(222)
-        with patch.object(company_routes.rmsp_client, "fetch_by_inn", lambda inn: RECORD):
-            response = await client.post("/api/session", json={"inn": INN})
+        response = await client.post("/api/session", json={"inn": INN})
         self.assertEqual(response.status_code, 409)
 
     async def test_profile_form_saves_only_corrections(self):
@@ -716,8 +726,10 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("cash_register", form["flags"])
 
         update = {"regime": "usn_income", "headcount": "16", "okved": "56.10", "region": "16", "hasLicenses": True,
-                  "flags": {"cash_register": True, "marked_goods": None}}
-        for bad in ({"okved": "ресторан"}, {"regime": "psn"}, {"region": "00"}, {"headcount": "7"}):
+                  "flags": {"cash_register": True, "marked_goods": None}, "kpp": "165001001",
+                  "address": "423800, г. Набережные Челны, пр. Мира, д. 1", "directorPosition": "Генеральный директор",
+                  "directorName": "ИВАНОВ ИВАН ИВАНОВИЧ"}
+        for bad in ({"okved": "ресторан"}, {"regime": "psn"}, {"region": "00"}, {"headcount": "7"}, {"kpp": "12345"}):
             self.assertEqual((await client.put("/api/company/profile", json=update | bad)).status_code, 422, bad)
         next_step = AsyncMock(return_value=False)
         with patch.object(bot_flow, "next_step", next_step):
@@ -738,6 +750,10 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((profile.okved_main, profile.region_code, profile.headcount, profile.flags),
                          ("56.10", "16", 16, {"cash_register": True}))
         self.assertTrue(await self.events(type="deadline"), "обязанности пересчитаны")
+        self.assertEqual((answers.kpp, answers.director_position), ("165001001", "Генеральный директор"))
+        form = (await client.get("/api/company/profile")).json()
+        self.assertEqual((form["kpp"], form["directorName"]), ("165001001", "ИВАНОВ ИВАН ИВАНОВИЧ"))
+        self.assertEqual((await client.get("/api/company")).json()["kpp"], "165001001")
 
     async def test_registration_card_waits_for_answer(self):
         from bot import message_handler as bot_flow
@@ -771,7 +787,7 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Ближайший срок — ", summary)
         self.assertIn("Список, календарь и документы — в приложении", summary)
         async with SessionLocal() as db:
-            card = bot_flow.company_card(await db.get(Business, INN), await worker.load_profile(db, INN))
+            card = bot_flow.company_card(await db.get(Business, INN), await worker.load_profile(db, INN), "реестр МСП, открытые данные ФНС на 10.09.2026")
         self.assertIn("ОКВЭД: 41.20 — Строительство жилых и нежилых зданий", card)
         self.assertIn("Микропредприятие · 1–15 человек", card)
         self.assertIn("Регион: Республика Татарстан", card)
@@ -790,7 +806,7 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Радар настроен", summary, "о численности не спрашиваем — она есть в реестре")
         async with SessionLocal() as db:
             profile = await worker.load_profile(db, INN)
-            self.assertIn("Микропредприятие · 12 человек (ФНС)", bot_flow.company_card(await db.get(Business, INN), profile))
+            self.assertIn("Микропредприятие · 12 человек (ФНС)", bot_flow.company_card(await db.get(Business, INN), profile, "реестр МСП, открытые данные ФНС на 10.09.2026"))
         benefits = [b.title for b in profile.headcount_benefits()]
         self.assertTrue(any(title.startswith("Можно применять УСН") for title in benefits))
         self.assertFalse(any("АУСН" in title for title in benefits), "12 человек — больше порога АУСН")

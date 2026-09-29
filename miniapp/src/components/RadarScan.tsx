@@ -20,7 +20,7 @@ export function RadarScan({ scanning, checkedAt, onScan }: Props) {
           <span className="t-body-strong">{scanning ? "Сканируем реестры ФНС…" : "Радар включён"}</span>
           <span className="t-note c-secondary">
             {scanning
-              ? "Реестр МСП и выписка ЕГРЮЛ"
+              ? "Реестр МСП и проверки ЕРКНМ"
               : checkedAt
                 ? `Проверено ${updatedAt(checkedAt)}. Следующая проверка — ночью`
                 : "Проверяем реестры каждую ночь"}

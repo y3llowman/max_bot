@@ -51,7 +51,7 @@ function DashboardContent({ data, stale, onScanned }: { data: DashboardData; sta
     try {
       setCompany(await api.refreshCompany());
       onScanned();
-      toast({ text: "Реестр МСП проверен, ЕГРЮЛ проверяем в фоне — находки придут в чат" });
+      toast({ text: "Данные реестра МСП обновлены, проверки ЕРКНМ смотрим в фоне — находки придут в чат" });
     } catch {
       toast({ text: "ФНС не отвечает — попробуйте позже", icon: "alert-circle" });
     } finally {

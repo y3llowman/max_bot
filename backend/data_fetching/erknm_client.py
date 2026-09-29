@@ -8,7 +8,7 @@ from datetime import date
 
 import requests
 
-API = "https://proverki.gov.ru/public/api/opendata"
+PASSPORT = "https://proverki.gov.ru/blob/erknm-opendata/7710146102-inspection-{year}-{month}.xml"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                          "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
@@ -30,11 +30,14 @@ class Knm:
 
 
 def month_zip_url(year: int, month: int) -> str | None:
-    resp = requests.get(f"{API}/{year}/{month}", params={"isFederalLaw248": "true"}, headers=HEADERS, timeout=30)
-    if resp.status_code == 500 and "not found" in resp.text:
+    resp = requests.get(PASSPORT.format(year=year, month=month), headers=HEADERS, timeout=30)
+    if resp.status_code == 404:
         return None
     resp.raise_for_status()
-    return resp.json().get("dataZipUrl")
+    versions = [(version.findtext("created") or "", version.findtext("source"))
+                for version in ET.fromstring(resp.content).iter("dataversion")]
+    versions = [version for version in versions if version[1]]
+    return max(versions)[1] if versions else None
 
 
 def _value(el: ET.Element, tag: str) -> str | None:

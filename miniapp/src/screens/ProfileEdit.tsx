@@ -17,6 +17,7 @@ import { useSession } from "../session";
 import s from "./ProfileEdit.module.css";
 
 const OKVED = /^\d{2}(\.\d{1,2}){0,2}$/;
+const KPP = /^\d{9}$/;
 const FLAG_VALUES = [
   { value: "yes", label: "Да" },
   { value: "no", label: "Нет" },
@@ -33,6 +34,10 @@ function toUpdate(form: ProfileForm): ProfileUpdate {
     flags: form.flags,
     patentFrom: form.patentFrom ?? null,
     patentTo: form.patentTo ?? null,
+    kpp: form.kpp ?? null,
+    address: form.address ?? null,
+    directorPosition: form.directorPosition ?? null,
+    directorName: form.directorName ?? null,
   };
 }
 
@@ -54,9 +59,10 @@ export function ProfileEdit() {
     setDraft((d) => (d ? { ...d, [key]: value } : d));
 
   const okvedOk = !!draft && OKVED.test(draft.okved.trim());
+  const kppOk = !draft?.kpp || KPP.test(draft.kpp);
 
   const save = async () => {
-    if (!draft || !okvedOk) return;
+    if (!draft || !okvedOk || !kppOk) return;
     setSaving(true);
     try {
       setCompany(await api.saveProfile({ ...draft, okved: draft.okved.trim() }));
@@ -99,7 +105,7 @@ export function ProfileEdit() {
       gap={10}
       bottom={
         <ActionBar>
-          <Button block onClick={save} disabled={!draft || !okvedOk || saving}>
+          <Button block onClick={save} disabled={!draft || !okvedOk || !kppOk || saving}>
             Сохранить
           </Button>
         </ActionBar>
@@ -181,6 +187,34 @@ export function ProfileEdit() {
               trail={<Toggle checked={draft.hasLicenses} />}
             />
           </ListGroup>
+
+          <SectionHeader title="Реквизиты для документов" />
+          <ListGroup>
+            {data.isLegalEntity && (
+              <InputCell
+                title="КПП"
+                caption={kppOk ? "9 цифр" : "КПП — 9 цифр"}
+                error={!kppOk}
+                inputMode="numeric"
+                value={draft.kpp ?? ""}
+                onChange={(e) => set("kpp", e.target.value.replace(/\D/g, "").slice(0, 9) || null)}
+              />
+            )}
+            <InputCell title="Адрес" value={draft.address ?? ""} onChange={(e) => set("address", e.target.value || null)} />
+            <InputCell
+              title="Должность руководителя"
+              value={draft.directorPosition ?? ""}
+              onChange={(e) => set("directorPosition", e.target.value || null)}
+            />
+            <InputCell
+              title="ФИО руководителя"
+              value={draft.directorName ?? ""}
+              onChange={(e) => set("directorName", e.target.value || null)}
+            />
+          </ListGroup>
+          <p className="t-note c-secondary">
+            В открытых данных ФНС реквизитов нет — впишите их один раз, и бот подставит их в черновики документов.
+          </p>
 
           <SectionHeader title="Для ленты законов" />
           <ListGroup>

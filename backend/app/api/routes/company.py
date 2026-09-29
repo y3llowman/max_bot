@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import re
 from dataclasses import asdict
@@ -12,11 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.depends import get_current_business, get_current_user
 from core.inn import is_valid_inn
 from app.api.schemas import Benefit, Company, Option, ProfileForm, ProfileOptions, ProfileUpdate, Source
-from data_fetching import rmsp_client
+from databases import msp_registry
 from databases import get_db
 from databases.businesses_db import Business, CompanyTaken, save_business
 from databases.users_db import User
-from notifications.models import BusinessProfile, Notification, RegistrySnapshot
+from notifications.models import BusinessProfile, Notification
 from notifications.worker import (answered, dispatch, load_profile, materialize_for, registry_loaded,
                                   scan_in_background)
 from radar.deadlines import CATEGORY_RU, HEADCOUNT_RU, REGIME_RU, REGIONS, headcount_ru, region_name
@@ -50,11 +49,8 @@ async def to_company(db: AsyncSession, business: Business) -> Company:
     name = quoted.group(0) if quoted else full_name
     profile = await load_profile(db, business.inn)
     regime = REGIME_RU.get(profile.tax_regime)
-    egrul = (await db.execute(
-        select(RegistrySnapshot.data)
-        .where(RegistrySnapshot.inn == business.inn, RegistrySnapshot.source == "egrul")
-        .order_by(RegistrySnapshot.id.desc()).limit(1)
-    )).scalar_one_or_none() or {}
+    answers = await db.get(BusinessProfile, business.inn)
+    source = msp_registry.source_note(await msp_registry.current_load())
     okved = (registry_okved(business) if profile.okved_main == business.main_activity_code
              else f"{profile.okved_main} — указан вами")
     return Company(
@@ -63,29 +59,24 @@ async def to_company(db: AsyncSession, business: Business) -> Company:
         initials="".join(word[0] for word in re.findall(r"\w+", name)[:2]).upper(),
         regime=regime or "Режим налогообложения не указан",
         inn=business.inn,
-        kpp=egrul.get("kpp"),
+        kpp=answers.kpp if answers else None,
         ogrn=business.ogrn,
         okved=okved,
         category=CATEGORY_RU.get(business.category),
         headcount=headcount_ru(profile),
         region=region_name(profile.region_code),
         needs_answers=regime is None or profile.headcount is None,
-        source=Source(name="Реестр МСП (ФНС)", demo=False, updated_at=business.updated_at.replace(microsecond=0)),
+        source=Source(name=source[:1].upper() + source[1:], demo=False, updated_at=business.updated_at.replace(microsecond=0)),
         benefits=[Benefit(title=b.title, basis=b.basis, url=b.url) for b in profile.headcount_benefits()],
     )
 
 
-async def fetch_registry(inn: str) -> rmsp_client.RmspRecord | None:
-    try:
-        return await asyncio.to_thread(rmsp_client.fetch_by_inn, inn)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="SME registry is unavailable") from exc
-
-
 async def load_from_registry(db: AsyncSession, user: User, inn: str) -> Business:
-    record = await fetch_registry(inn)
+    record = await msp_registry.find(inn)
     if record is None:
-        raise HTTPException(status_code=404, detail="INN not found in the SME registry")
+        detail = ("INN not found in the SME registry" if await msp_registry.is_complete()
+                  else "INN not found in the SME registry slice loaded in this MVP")
+        raise HTTPException(status_code=404, detail=detail)
     try:
         business = await save_business(db, user.id, record)
     except CompanyTaken as exc:
@@ -118,8 +109,8 @@ async def current_company(
 
 @router.post("/session", response_model=Company, response_model_exclude_none=True,
              summary="Подключить компанию по ИНН: профиль из реестра МСП, сроки обязанностей; "
-                     "422 — неверный ИНН, 404 — нет в реестре МСП, 409 — ведёт другой пользователь, "
-                     "503 — реестр ФНС не ответил")
+                     "422 — неверный ИНН, 404 — нет в реестре МСП (в MVP — в загруженном срезе), "
+                     "409 — ведёт другой пользователь")
 async def connect_company(
     payload: ConnectRequest,
     background: BackgroundTasks,
@@ -133,16 +124,17 @@ async def connect_company(
 
 
 @router.post("/company/refresh", response_model=Company, response_model_exclude_none=True,
-             summary="Перепроверить компанию в реестре МСП сейчас; ЕГРЮЛ и ЕРКНМ — в фоне")
+             summary="Перепроверить компанию по загруженному реестру МСП; ЕРКНМ — в фоне")
 async def refresh_company(
     background: BackgroundTasks,
     business: Business = Depends(get_current_business),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    record = await fetch_registry(business.inn)
+    record = await msp_registry.find(business.inn)
     if record is None:
-        await registry_loaded(business.inn, None)
+        if await msp_registry.is_complete():
+            await registry_loaded(business.inn, None)
     else:
         business = await save_business(db, user.id, record)
         await registry_loaded(business.inn, asdict(record))
@@ -168,6 +160,9 @@ async def profile_form(
         has_licenses=profile.has_licenses,
         flags={flag: profile.flags.get(flag) for flag in FLAGS},
         patent_from=profile.patent_from, patent_to=profile.patent_to,
+        kpp=answers.kpp if answers else None, address=answers.address if answers else None,
+        director_position=answers.director_position if answers else None,
+        director_name=answers.director_name if answers else None,
         options=ProfileOptions(
             regimes=[Option(value=code, label=label[:1].upper() + label[1:]) for code, label in REGIME_RU.items()
                      if not (profile.is_legal_entity and code == "psn")],
@@ -204,6 +199,9 @@ async def save_profile(
         raise invalid("Unknown region")
     if set(payload.flags) - set(FLAGS):
         raise invalid("Unknown flag")
+    kpp = (payload.kpp or "").strip() or None
+    if kpp is not None and not re.fullmatch(r"\d{9}", kpp):
+        raise invalid("KPP must be 9 digits")
     patent = payload.regime == "psn" and payload.patent_from and payload.patent_to
     if patent and not payload.patent_from <= payload.patent_to <= payload.patent_from + timedelta(days=366):
         raise invalid("Patent term must be from 1 day to 12 months")
@@ -219,6 +217,10 @@ async def save_profile(
     answers.has_licenses = payload.has_licenses if payload.has_licenses != business.has_licenses else None
     answers.flags = {code: value for code, value in payload.flags.items() if value is not None}
     answers.patent_from, answers.patent_to = (payload.patent_from, payload.patent_to) if patent else (None, None)
+    answers.kpp = kpp
+    answers.address = (payload.address or "").strip() or None
+    answers.director_position = (payload.director_position or "").strip()[:100] or None
+    answers.director_name = (payload.director_name or "").strip()[:200] or None
     answers.answered_at = datetime.now(timezone.utc)
     db.add(answers)
     await db.commit()

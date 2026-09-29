@@ -78,6 +78,10 @@ class ProfileForm(CamelModel):
     flags: dict[str, bool | None]
     patent_from: date | None = None
     patent_to: date | None = None
+    kpp: str | None = None
+    address: str | None = None
+    director_position: str | None = None
+    director_name: str | None = None
     options: ProfileOptions
 
 
@@ -90,6 +94,10 @@ class ProfileUpdate(CamelModel):
     flags: dict[str, bool | None] = {}
     patent_from: date | None = None
     patent_to: date | None = None
+    kpp: str | None = None
+    address: str | None = None
+    director_position: str | None = None
+    director_name: str | None = None
 
 
 class Task(CamelModel):

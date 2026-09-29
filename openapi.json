@@ -127,7 +127,7 @@
         "tags": [
           "company"
         ],
-        "summary": "Подключить компанию по ИНН: профиль из реестра МСП, сроки обязанностей; 422 — неверный ИНН, 404 — нет в реестре МСП, 409 — ведёт другой пользователь, 503 — реестр ФНС не ответил",
+        "summary": "Подключить компанию по ИНН: профиль из реестра МСП, сроки обязанностей; 422 — неверный ИНН, 404 — нет в реестре МСП (в MVP — в загруженном срезе), 409 — ведёт другой пользователь",
         "operationId": "connect_company_api_session_post",
         "requestBody": {
           "content": {
@@ -173,7 +173,7 @@
         "tags": [
           "company"
         ],
-        "summary": "Перепроверить компанию в реестре МСП сейчас; ЕГРЮЛ и ЕРКНМ — в фоне",
+        "summary": "Перепроверить компанию по загруженному реестру МСП; ЕРКНМ — в фоне",
         "operationId": "refresh_company_api_company_refresh_post",
         "responses": {
           "200": {
@@ -1272,6 +1272,50 @@
             ],
             "title": "Patentto"
           },
+          "kpp": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kpp"
+          },
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "directorPosition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Directorposition"
+          },
+          "directorName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Directorname"
+          },
           "options": {
             "$ref": "#/components/schemas/ProfileOptions"
           }
@@ -1403,6 +1447,50 @@
               }
             ],
             "title": "Patentto"
+          },
+          "kpp": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kpp"
+          },
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "directorPosition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Directorposition"
+          },
+          "directorName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Directorname"
           }
         },
         "type": "object",

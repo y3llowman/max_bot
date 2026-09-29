@@ -62,6 +62,12 @@ class Titles(unittest.TestCase):
         self.assertIsNone(topics("О внесении изменений в Кодекс Российской Федерации об административных правонарушениях"))
         self.assertEqual(topics("О внесении изменений в Федеральный закон «О карантине растений»"), [])
 
+    def test_opaque_amendments_are_final_without_text_source(self):
+        m = meta("Федеральный закон от 24.09.2026 № 401-ФЗ", "О внесении изменений в отдельные законодательные акты "
+                                                           "Российской Федерации")
+        self.assertIsNone(laws.classify(m, [], None))
+        self.assertEqual(laws.classify(m, [], None, final=True).topics, [])
+
     def test_amended_act_found_by_number(self):
         name = "О внесении изменений в постановление Правительства Российской Федерации от 31 мая 2025 г. № 819"
         self.assertEqual(laws.act_refs(name), [("government", "819", date(2025, 5, 31))])

@@ -21,7 +21,7 @@ logger = logging.getLogger(__file__)
 
 from message_handler import dp
 from bot.client import bot
-from databases import init_db
+from databases import init_db, msp_registry
 from notifications.worker import build_scheduler, queue_reminders, start_laws
 
 
@@ -32,6 +32,7 @@ def _log_failure(task: asyncio.Task) -> None:
 
 async def main():
     await init_db()
+    await msp_registry.ensure_loaded()
     scheduler = build_scheduler()
     scheduler.start()
     await queue_reminders()

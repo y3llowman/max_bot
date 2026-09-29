@@ -99,6 +99,10 @@ export interface ProfileForm {
   flags: Record<string, boolean | null>;
   patentFrom?: string;
   patentTo?: string;
+  kpp?: string;
+  address?: string;
+  directorPosition?: string;
+  directorName?: string;
   options: { regimes: Option[]; headcounts: Option[]; regions: Option[]; flags: Option[] };
 }
 
@@ -111,6 +115,10 @@ export interface ProfileUpdate {
   flags: Record<string, boolean | null>;
   patentFrom: string | null;
   patentTo: string | null;
+  kpp: string | null;
+  address: string | null;
+  directorPosition: string | null;
+  directorName: string | null;
 }
 
 export type RemindMode = "d30-7-1" | "d7-3-1" | "d3-0" | "d0";

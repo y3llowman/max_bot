@@ -34,6 +34,10 @@ class BusinessProfile(Base):
     has_licenses: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     patent_from: Mapped[date | None] = mapped_column(Date, nullable=True)
     patent_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    kpp: Mapped[str | None] = mapped_column(String(9), nullable=True)
+    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    director_position: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    director_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
 
 class LawRecord(Base):

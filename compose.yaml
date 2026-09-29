@@ -60,6 +60,8 @@ services:
       MAX_TOKEN: ${MAX_TOKEN:?set MAX_TOKEN in .env}
       DEBUG: ${DEBUG:-false}
       DEMO: ${DEMO:-true}
+      MSP_FULL_REFRESH: ${MSP_FULL_REFRESH:-false}
+      LAW_PDF: ${LAW_PDF:-false}
     depends_on:
       postgres:
         condition: service_healthy

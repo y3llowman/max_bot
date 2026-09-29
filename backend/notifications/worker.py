@@ -21,7 +21,9 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.client import bot, bot_app, send_html
-from data_fetching import egrul_client, erknm_client, pravo_client, rmsp_client
+from core.config import LAW_PDF, MSP_FULL_REFRESH
+from data_fetching import erknm_client, pravo_client
+from databases import msp_registry
 from databases.businesses_db import Business, UserBusiness, current_business
 from databases.engine_start import SessionLocal
 from databases.users_db import User
@@ -40,16 +42,6 @@ WINDOW_DAYS = 365
 LAW_LOOKBACK_DAYS = 10
 LAW_RECENT_DAYS = 30
 PDF_LIMIT = 20 * 1024 * 1024
-
-
-async def fetch_egrul(inn: str) -> dict | None:
-    extract = await asyncio.to_thread(egrul_client.get_extract, inn)
-    return asdict(extract) if extract is not None else None
-
-
-async def fetch_msp(inn: str) -> dict | None:
-    record = await asyncio.to_thread(rmsp_client.fetch_by_inn, inn)
-    return asdict(record) if record is not None else None
 
 
 async def save_snapshot(inn: str, source: str, data: dict | None) -> dict | None:
@@ -141,20 +133,6 @@ async def reopen_conditions(inn: str, source: str, drafts: list[det.Draft], toda
     return reopened
 
 
-async def process_egrul(inn: str, today: date) -> None:
-    cur = await fetch_egrul(inn)
-    if cur is None:
-        return
-    prev = await save_snapshot(inn, "egrul", cur)
-    drafts = det.egrul_conditions(inn, cur, today) + det.egrul_changes(inn, prev, cur, today)
-    await reopen_conditions(inn, "egrul", drafts, today)
-    new_events = await upsert_events(inn, "egrul", drafts)
-    gone = det.reconcile_conditions(await open_condition_keys(inn, "egrul"), drafts)
-    closed = await close_conditions(inn, gone)
-    new_events += await upsert_events(inn, "egrul", det.resolutions(closed, today))
-    await alert(new_events)
-
-
 async def process_msp(inn: str, cur: dict | None, today: date) -> list[RadarEvent]:
     prev = await save_snapshot(inn, "msp", cur)
     drafts = det.msp_changes(inn, prev, cur, today)
@@ -199,10 +177,6 @@ async def scan_in_background(inn: str) -> None:
     _scanning.add(inn)
     today = today_msk()
     try:
-        try:
-            await process_egrul(inn, today)
-        except Exception:
-            logger.exception("egrul scan failed for %s", inn)
         if _erknm_checked.get(inn) != today:
             await process_inspections({inn}, today)
             _erknm_checked[inn] = today
@@ -220,31 +194,19 @@ async def active_inns() -> list[str]:
         return list(rows)
 
 
-EGRUL_PAUSE = 60
-EGRUL_CAPTCHA_PAUSE = 900
-
-
-async def sync_egrul() -> None:
-    today = today_msk()
-    for inn in await active_inns():
-        for attempt in (1, 2):
-            try:
-                await process_egrul(inn, today)
-            except egrul_client.CaptchaRequiredError:
-                logger.warning("egrul captcha for %s, attempt %s", inn, attempt)
-                await asyncio.sleep(EGRUL_CAPTCHA_PAUSE)
-                continue
-            except Exception:
-                logger.exception("egrul sync failed for %s", inn)
-            break
-        await asyncio.sleep(EGRUL_PAUSE)
-
-
 async def sync_msp() -> None:
+    if MSP_FULL_REFRESH:
+        try:
+            await msp_registry.refresh_full()
+        except Exception:
+            logger.exception("msp registry refresh failed")
+    complete = await msp_registry.is_complete()
     today = today_msk()
     for inn in await active_inns():
         try:
-            record = await asyncio.to_thread(rmsp_client.fetch_by_inn, inn)
+            record = await msp_registry.find(inn)
+            if record is None and not complete:
+                continue
             await process_msp(inn, asdict(record) if record else None, today)
             if record is not None:
                 async with SessionLocal() as db:
@@ -255,7 +217,6 @@ async def sync_msp() -> None:
                     await db.commit()
         except Exception:
             logger.exception("msp sync failed for %s", inn)
-        await asyncio.sleep(1)
 
 
 async def load_profile(db: AsyncSession, inn: str) -> Profile | None:
@@ -329,16 +290,14 @@ async def materialize() -> None:
 
 async def classify_act(meta: dict) -> laws.Law | None:
     law = laws.classify(meta, [], None)
-    if law is not None and not law.topics:
+    if law is not None:
         return law
     resolved = []
-    if law is None:
-        for block, number, signed in laws.act_refs(laws.split_meta(meta)[1]):
-            found = await asyncio.to_thread(pravo_client.find_act, block, number, signed)
-            if found:
-                resolved.append(laws.split_meta(found)[1])
-    text = await asyncio.to_thread(pravo_client.text, meta["eoNumber"])
-    return laws.classify(meta, resolved, text) if text or resolved else law
+    for block, number, signed in laws.act_refs(laws.split_meta(meta)[1]):
+        found = await asyncio.to_thread(pravo_client.find_act, block, number, signed)
+        if found:
+            resolved.append(laws.split_meta(found)[1])
+    return laws.classify(meta, resolved, None, final=True)
 
 
 async def ingest_laws(today: date | None = None, days: int = LAW_LOOKBACK_DAYS, notify: bool = True) -> int:
@@ -580,7 +539,7 @@ async def _send(db: AsyncSession, items: list[tuple[Notification, User, RadarEve
         if e is not None:
             e.last_notified_at = now
     user.awaiting_mid, user.awaiting_since = message_id, now
-    if event is not None and event.type == "law.upcoming" and (first.label == "alert" or first.label.startswith("demo")):
+    if LAW_PDF and event is not None and event.type == "law.upcoming" and (first.label == "alert" or first.label.startswith("demo")):
         try:
             await send_law_pdf(user.max_user_id, event.payload)
         except Exception:
@@ -602,7 +561,8 @@ async def _render(db: AsyncSession, items: list[tuple[Notification, User, RadarE
     text = render("push." + first.template, ctx)
     if event.type == "profile.question":
         return text, flag_keyboard(event.payload["flag"])
-    return text, keyboard([e.id for e in events], app=await bot_app())
+    link = pravo_client.page_url(event.payload["eo"]) if event.type == "law.upcoming" else None
+    return text, keyboard([e.id for e in events], app=await bot_app(), link=link)
 
 
 async def queue_text(user_id: int, text: str, kb: dict, label: str) -> None:
@@ -781,7 +741,6 @@ async def demo_law(max_user_id: int) -> str:
 
 def build_scheduler() -> AsyncIOScheduler:
     s = AsyncIOScheduler(timezone=MSK)
-    s.add_job(sync_egrul, CronTrigger(hour=3, minute=0, jitter=600), id="egrul", max_instances=1)
     s.add_job(sync_msp, CronTrigger(day=11, hour=4), id="msp", max_instances=1)
     s.add_job(materialize, CronTrigger(hour=5), id="deadlines", max_instances=1)
     s.add_job(queue_reminders, CronTrigger(hour=REMIND_HOUR), id="reminders", max_instances=1)

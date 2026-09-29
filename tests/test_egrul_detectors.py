@@ -3,11 +3,9 @@ import unittest
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from data_fetching import egrul_client
 from radar import detectors as det
 from radar.render import build_context, company_ctx, render
 
@@ -117,31 +115,6 @@ class ResolutionsTest(unittest.TestCase):
 
     def test_msp_conditions_have_no_resolution_message(self):
         self.assertEqual(det.resolutions([self.event("msp.excluded")], TODAY), [])
-
-
-class ParseExtractTest(unittest.TestCase):
-    ROWS = [
-        ["Место нахождения и адрес юридического лица", None, None],
-        ["5", "Адрес юридического лица", "632450,\nНОВОСИБИРСКАЯ ОБЛАСТЬ,\nС. ДОВОЛЬНОЕ"],
-        ["6", "ГРН и дата внесения в ЕГРЮЛ записи,\nсодержащей указанные сведения", "1025405013193\n19.12.2002"],
-        ["8", "Дополнительные сведения", "сведения недостоверны (результаты\nпроверки достоверности)"],
-        ["9", "ГРН и дата внесения в ЕГРЮЛ записи,\nсодержащей указанные сведения", "2245400751286\n19.08.2024"],
-        ["Сведения о состоянии юридического лица", None, None],
-        ["10", "Состояние", "Находится в стадии ликвидации"],
-        ["11", "ГРН и дата внесения в ЕГРЮЛ записи,\nсодержащей указанные сведения", "2267700000001\n01.09.2026"],
-        ["Сведения о лице, имеющем право без доверенности действовать от имени юридического\nлица", None, None],
-        ["21", "Фамилия\nИмя\nОтчество", "ТУРКОВ\nВЛАДИМИР\nНИКОЛАЕВИЧ"],
-        ["23", "ГРН и дата внесения в ЕГРЮЛ записи,\nсодержащей указанные сведения", "2125456018246\n28.05.2012"],
-        ["29", "Дополнительные сведения", "сведения недостоверны"],
-        ["30", "ГРН и дата внесения в ЕГРЮЛ записи,\nсодержащей указанные сведения", "2245401044249\n20.11.2024"],
-    ]
-
-    def test_notes_and_status_get_entry_dates(self):
-        with patch.object(egrul_client.pymupdf, "open"), patch.object(egrul_client, "_table_rows", return_value=self.ROWS):
-            parsed = egrul_client.parse_extract_pdf(b"")
-        self.assertEqual([(n.section, n.date) for n in parsed.notes], [(ADDRESS, "19.08.2024"), (DIRECTOR, "20.11.2024")])
-        self.assertEqual((parsed.status, parsed.status_date), ("Находится в стадии ликвидации", "01.09.2026"))
-        self.assertEqual(parsed.address, "632450, НОВОСИБИРСКАЯ ОБЛАСТЬ, С. ДОВОЛЬНОЕ")
 
 
 if __name__ == "__main__":

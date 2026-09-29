@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import html
-import json
-import re
 from datetime import date
 
 import requests
 
 PUBLICATION = "http://publication.pravo.gov.ru"
-ACTUAL = "http://actual.pravo.gov.ru:8000/api/ebpi/"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                          "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
@@ -47,25 +43,6 @@ def find_act(block: str, number: str, signed: date) -> dict | None:
     items = _get(f"{PUBLICATION}/api/Documents", Block=block, Number=number, DocumentDateFrom=f"{signed:%d.%m.%Y}",
                  DocumentDateTo=f"{signed:%d.%m.%Y}", PageSize=10, Index=1).json().get("items") or []
     return items[0] if len(items) == 1 else None
-
-
-def text(eo_number: str) -> str | None:
-    has_text = requests.get(f"{PUBLICATION}/api/DocumentText", params={"eonumber": eo_number},
-                            headers=HEADERS, timeout=60)
-    if has_text.status_code != 200 or has_text.text.strip() != "true":
-        return None
-    reds = _get(ACTUAL + "redactions/", bpa="ebpi", t=json.dumps({"pnum": eo_number, "ttl": 2})).json()
-    redactions = reds.get("redactions") or []
-    if not redactions:
-        return None
-    red = next((r for r in redactions if r.get("redinitial")), redactions[0])
-    raw = _get(ACTUAL + "redtext", bpa="ebpi", t=str(red["redid"]), ttl=2).json().get("redtext")
-    if not raw:
-        return None
-    raw = re.sub(r"(?is)<(style|script|head)\b.*?</\1>", " ", raw)
-    raw = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</h\d>", "\n", raw)
-    plain = html.unescape(re.sub(r"<[^>]+>", " ", raw))
-    return "\n".join(line for line in (" ".join(ln.split()) for ln in plain.splitlines()) if line)
 
 
 def pdf(eo_number: str) -> bytes:

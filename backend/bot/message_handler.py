@@ -15,7 +15,8 @@ from maxapi.context import BaseContext, State, StatesGroup
 from bot.client import bot, bot_app
 from core.config import DEMO
 from core.inn import is_valid_inn
-from data_fetching import rmsp_client
+from data_fetching.msp_open_data import MspRecord
+from databases import msp_registry
 from databases.businesses_db import Business, CompanyTaken, current_business, save_business
 from databases.engine_start import SessionLocal
 from databases.users_db import User
@@ -24,7 +25,7 @@ from notifications import worker
 from notifications.models import BusinessProfile, RadarEvent
 from notifications.planner import today_msk
 from radar.deadlines import CATEGORY_RU, HEADCOUNT_RU, REGIME_RU, Profile, headcount_ru, region_name
-from radar.render import company_name, date_ru, date_short, decap, plural
+from radar.render import company_name, date_short, decap, plural
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ MSP_SIGNS = {"is_social": "социальное предприятие", "is_hit
              "is_partnership": "участник программы партнёрства"}
 
 
-def company_card(business: Business, profile: Profile) -> str:
+def company_card(business: Business, profile: Profile, source: str) -> str:
     okved = (f"{business.main_activity_code} — {html.escape(business.main_activity_name)}"
              if profile.okved_main == business.main_activity_code else f"{profile.okved_main} (указан вами)")
     contacts = " · ".join(html.escape(c) for c in (business.phone, business.email, business.website) if c)
@@ -64,7 +65,7 @@ def company_card(business: Business, profile: Profile) -> str:
         f"Признаки МСП: {signs}" if signs else "",
         f"Режим: {REGIME_RU[profile.tax_regime]}" if profile.tax_regime
         else "Режим налогообложения: в открытых реестрах его нет — спросим",
-        f"<i>Источник: реестр МСП (ФНС), данные на {date_ru(business.updated_at.date())}</i>",
+        f"<i>Источник: {html.escape(source)}</i>",
     ]
     return "\n".join(line for line in lines if line)
 
@@ -144,7 +145,7 @@ async def next_step(max_user_id: int) -> bool:
     return False
 
 
-async def _save_business(max_user_id: int, sender, record: rmsp_client.RmspRecord) -> Business:
+async def _save_business(max_user_id: int, sender, record: MspRecord) -> Business:
     async with SessionLocal() as db:
         result = await db.execute(select(User).where(User.max_user_id == max_user_id))
         user = result.scalar_one_or_none()
@@ -201,7 +202,8 @@ async def on_profile(event: MessageCreated):
         await say(max_user_id, ASK_INN)
         return
     app = await bot_app()
-    await say(max_user_id, company_card(business, profile), ButtonsPayload(buttons=[
+    source = msp_registry.source_note(await msp_registry.current_load())
+    await say(max_user_id, company_card(business, profile, source), ButtonsPayload(buttons=[
         [OpenAppButton(text="✏️ Изменить данные", **app, payload="profile_edit")],
         [OpenAppButton(text="Открыть приложение", **app)],
     ]).pack())
@@ -272,17 +274,9 @@ async def on_inn(event: MessageCreated, context: BaseContext):
     if event.message.sender is None:
         return
 
-    try:
-        record = await asyncio.to_thread(rmsp_client.fetch_by_inn, inn)
-    except Exception:
-        logger.exception("rmsp lookup failed for %s", inn)
-        await event.message.answer("Реестр МСП (ФНС) сейчас не отвечает. Пришлите ИНН ещё раз через пару минут.")
-        return
+    record = await msp_registry.find(inn)
     if record is None:
-        await event.message.answer(
-            f"Компанию с ИНН {inn} не нашли в реестре МСП. "
-            "Проверьте номер и отправьте его ещё раз:"
-        )
+        await event.message.answer(await not_in_registry(inn))
         return
 
     max_user_id = event.message.sender.user_id
@@ -301,13 +295,23 @@ async def on_inn(event: MessageCreated, context: BaseContext):
     await show_found(max_user_id, business)
 
 
+async def not_in_registry(inn: str) -> str:
+    load = await msp_registry.current_load()
+    if load is not None and load.kind == "full":
+        return f"Компанию с ИНН {inn} не нашли в реестре МСП. Проверьте номер и отправьте его ещё раз:"
+    examples = "\n".join(f"• {r.inn} — {company_name(r.name)}" for r in await msp_registry.examples())
+    return (f"Компании с ИНН {inn} нет в срезе реестра МСП, с которым работает MVP "
+            f"({msp_registry.source_note(load)}). Пришлите ИНН из среза, например:\n{examples}")
+
+
 async def show_found(max_user_id: int, business: Business) -> None:
     async with SessionLocal() as db:
         profile = await worker.load_profile(db, business.inn)
     app = await bot_app()
     keyboard = ButtonsPayload(buttons=[[CallbackButton(text="✅ Да, всё верно", payload="reg:ok")],
                                        [edit_button(app)]]).pack()
-    mid = await say(max_user_id, "Нашли вашу компанию:\n" + company_card(business, profile) + "\n\nВсё верно?", keyboard)
+    source = msp_registry.source_note(await msp_registry.current_load())
+    mid = await say(max_user_id, "Нашли вашу компанию:\n" + company_card(business, profile, source) + "\n\nВсё верно?", keyboard)
     await worker.hold(max_user_id, mid)
 
 

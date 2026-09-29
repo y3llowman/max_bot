@@ -372,7 +372,7 @@ def split_meta(meta: dict) -> tuple[str, str]:
     return " ".join(header.split()), name
 
 
-def classify(meta: dict, resolved: list[str], text: str | None) -> Law | None:
+def classify(meta: dict, resolved: list[str], text: str | None, final: bool = False) -> Law | None:
     header, name = split_meta(meta)
     published = datetime.fromisoformat(meta["publishDateShort"]).date()
     law = Law(meta["eoNumber"], header, name, published, [], pages=meta.get("pagesCount"),
@@ -388,7 +388,7 @@ def classify(meta: dict, resolved: list[str], text: str | None) -> Law | None:
         topics |= facts.topics
         law.amended += [a for a in facts.amended if a not in law.amended]
         law.effective = effective_dates(text, published)
-    elif not topics and needs_more(name) and not resolved:
+    elif not topics and needs_more(name) and not resolved and not final:
         return None
     law.topics = [t.code for t in TOPICS if t.code in topics]
     if meta.get("block") == "subjects":
@@ -423,7 +423,7 @@ def drafts(law: Law, p: Profile, today: date) -> list[Draft]:
         "effective_from": effective.isoformat() if effective else None,
         "effective_other": [d.isoformat() for d in law.effective[1:]],
         "reasons": list(dict.fromkeys(reasons)), "obligations": list(dict.fromkeys(touched)),
-        "actions": ["Прочитайте официальный текст акта (PDF с pravo.gov.ru).", *dict.fromkeys(actions)],
+        "actions": ["Прочитайте официальный текст акта на pravo.gov.ru: ссылка — под сообщением в чате и в разделе «Правовое обоснование».", *dict.fromkeys(actions)],
         "summary": [f"Изменяет: {a}" for a in law.amended[:5]] or [law.name],
         "source_url": f"http://publication.pravo.gov.ru/document/{law.eo_number}",
         "basis_url": f"http://publication.pravo.gov.ru/document/{law.eo_number}",

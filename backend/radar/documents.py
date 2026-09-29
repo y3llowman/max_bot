@@ -6,11 +6,10 @@ from dataclasses import dataclass
 from datetime import date
 
 from docx import Document
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from databases.businesses_db import Business
-from notifications.models import BusinessProfile, RegistrySnapshot
+from notifications.models import BusinessProfile
 from radar.deadlines import region_name
 from radar.render import as_date, company_name, date_ru, fio
 
@@ -42,21 +41,14 @@ BLANK = "________"
 async def requisites(db: AsyncSession, inn: str) -> dict:
     business = await db.get(Business, inn)
     profile = await db.get(BusinessProfile, inn)
-    snapshot = (await db.execute(
-        select(RegistrySnapshot.data)
-        .where(RegistrySnapshot.inn == inn, RegistrySnapshot.source == "egrul")
-        .order_by(RegistrySnapshot.fetched_at.desc()).limit(1)
-    )).scalar_one_or_none() or {}
-    director = snapshot.get("director") or {}
-    director_name = " ".join(filter(None, (director.get("surname"), director.get("name"), director.get("patronymic"))))
     return {
-        "name": company_name(snapshot.get("full_name") or business.name),
+        "name": company_name(business.name),
         "inn": inn,
-        "kpp": snapshot.get("kpp"),
+        "kpp": profile.kpp if profile else None,
         "ogrn": business.ogrn,
-        "address": snapshot.get("address"),
-        "director_position": (director.get("position") or "Руководитель").capitalize(),
-        "director_name": fio(director_name) or None,
+        "address": profile.address if profile else None,
+        "director_position": (profile.director_position if profile and profile.director_position else "Руководитель"),
+        "director_name": fio(profile.director_name) if profile and profile.director_name else None,
         "region": region_name(business.region_code),
         "tax_regime": profile.tax_regime if profile else None,
     }

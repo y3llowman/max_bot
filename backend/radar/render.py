@@ -83,7 +83,7 @@ def company_ctx(egrul: dict | None, msp: dict | None, inn: str) -> dict:
             "ogrn": (egrul or {}).get("ogrn") or (msp or {}).get("ogrn")}
 
 
-SOURCE_NAMES = {"egrul": "ЕГРЮЛ (ФНС)", "msp": "Единый реестр субъектов МСП (ФНС)",
+SOURCE_NAMES = {"egrul": "ЕГРЮЛ (ФНС)", "msp": "Единый реестр субъектов МСП (открытые данные ФНС)",
                 "erknm": "Единый реестр контрольных (надзорных) мероприятий",
                 "pravo": "Официальный интернет-портал правовой информации (pravo.gov.ru)",
                 "demo": "Имитация для демо (/demo), не данные реестра"}
@@ -109,13 +109,15 @@ def render(template: str, ctx: dict) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
-def keyboard(event_ids: list[int], app: dict | None = None) -> dict:
+def keyboard(event_ids: list[int], app: dict | None = None, link: str | None = None) -> dict:
     ids = ",".join(map(str, event_ids))
     rows = [[{"type": "callback", "text": "📋 В список дел", "payload": f"ev:{ids}:list"},
              {"type": "callback", "text": "✅ Сделано", "payload": f"ev:{ids}:done"}],
             [{"type": "callback", "text": "🔕 Не актуально", "payload": f"ev:{ids}:mute"}]]
     if app:
         rows[1].append({"type": "open_app", "text": "Открыть", **app, "payload": f"task_{event_ids[0]}"})
+    if link:
+        rows.append([{"type": "link", "text": "📄 Официальный текст", "url": link}])
     return {"type": "inline_keyboard", "payload": {"buttons": rows}}
 
 
@@ -125,5 +127,5 @@ def flag_keyboard(flag: str) -> dict:
     return {"type": "inline_keyboard", "payload": {"buttons": [row]}}
 
 
-SOURCE_URLS = {"egrul": "https://egrul.nalog.ru/", "msp": "https://rmsp.nalog.ru/",
+SOURCE_URLS = {"egrul": "https://egrul.nalog.ru/", "msp": "https://www.nalog.gov.ru/opendata/7707329152-rsmp/",
                "erknm": "https://proverki.gov.ru/portal/public-search"}

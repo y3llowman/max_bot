@@ -11,6 +11,8 @@ import notifications.models
 
 MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
 BASELINE = "0001"
+BASELINE_TABLES = ("users", "businesses", "user_businesses", "business_profiles", "registry_snapshots",
+                   "radar_events", "notifications", "laws")
 MIGRATION_LOCK = 7243150
 
 LEGACY_COLUMNS = (
@@ -41,7 +43,7 @@ def migrate(connection) -> None:
     config.attributes["connection"] = connection
     tables = inspect(connection).get_table_names()
     if "users" in tables and "alembic_version" not in tables:
-        Base.metadata.create_all(connection)
+        Base.metadata.create_all(connection, tables=[Base.metadata.tables[name] for name in BASELINE_TABLES])
         for statement in LEGACY_COLUMNS:
             connection.execute(text(statement))
         command.stamp(config, BASELINE)

@@ -100,7 +100,7 @@ checks:
       Content-Type: application/json
     body:
       inn: "7707083893"
-    expected_status: [404, 503]
+    expected_status: [404]
     response:
       content_type: application/json
       required_fields: [detail]
@@ -113,7 +113,7 @@ checks:
       Content-Type: application/json
     body:
       inn: "3666155612"
-    expected_status: [200, 503]
+    expected_status: [200]
     response:
       content_type: application/json
       required_fields: [name, fullName, initials, regime, inn, ogrn, needsAnswers, source]

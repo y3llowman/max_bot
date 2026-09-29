@@ -10,6 +10,8 @@ class EnvSettings(BaseSettings):
     PORT: int = 8000
     DEBUG: bool = False
     DEMO: bool = True
+    MSP_FULL_REFRESH: bool = False
+    LAW_PDF: bool = False
     PROJECT_NAME: str = "max-miniapp"
 
     model_config = SettingsConfigDict(
