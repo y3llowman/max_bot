@@ -1,6 +1,7 @@
 import csv
 import io
 import re
+import time
 import xml.etree.ElementTree as ET
 import zipfile
 from collections.abc import Iterator
@@ -50,12 +51,31 @@ def latest_url() -> str:
     return max(versions)[1]
 
 
-def download(url: str, target: Path) -> None:
-    with requests.get(url, headers=HEADERS, stream=True, timeout=300) as response:
-        response.raise_for_status()
-        with open(target, "wb") as f:
-            for chunk in response.iter_content(1 << 20):
-                f.write(chunk)
+def download(url: str, target: Path, attempts: int = 40) -> None:
+    total = None
+    target.write_bytes(b"")
+    for attempt in range(attempts):
+        have = target.stat().st_size
+        headers = {**HEADERS, "Range": f"bytes={have}-"} if have else HEADERS
+        try:
+            with requests.get(url, headers=headers, stream=True, timeout=(15, 60)) as response:
+                if response.status_code == 416 and total is not None and have >= total:
+                    return
+                response.raise_for_status()
+                resumed = response.status_code == 206
+                if have and not resumed:
+                    have = 0
+                length = int(response.headers.get("Content-Length") or 0)
+                total = have + length if length else total
+                with open(target, "ab" if resumed else "wb") as f:
+                    for chunk in response.iter_content(1 << 20):
+                        f.write(chunk)
+            if total is None or target.stat().st_size >= total:
+                return
+        except requests.RequestException:
+            pass
+        time.sleep(min(30, 2 + attempt * 2))
+    raise RuntimeError(f"не удалось скачать {url}: {target.stat().st_size} из {total} байт")
 
 
 def record(doc: ET.Element) -> MspRecord:

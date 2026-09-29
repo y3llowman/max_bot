@@ -7,6 +7,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import requests
+
 os.environ.setdefault("MAX_TOKEN", "test")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://max@localhost:5544/maxtest")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
@@ -80,6 +82,47 @@ class MspOpenDataTest(unittest.TestCase):
         self.assertIn("1650273744", records)
         self.assertIn("3666155612", records)
         self.assertNotIn("7707083893", records)
+
+
+class Flaky:
+    def __init__(self, data: bytes, fail_after: int):
+        self.data, self.fail_after, self.calls = data, fail_after, []
+
+    def __call__(self, url, headers=None, stream=False, timeout=None):
+        start = int(headers["Range"].split("=")[1].rstrip("-")) if headers and "Range" in headers else 0
+        self.calls.append(start)
+        body = self.data[start:]
+        first = not start and len(self.calls) == 1
+        response = MagicMock(status_code=206 if start else 200, headers={"Content-Length": str(len(body))})
+        response.raise_for_status = MagicMock()
+
+        def chunks(size):
+            yield body[: self.fail_after] if first else body
+            if first:
+                raise requests.ConnectionError("Read timed out")
+
+        response.iter_content = chunks
+        response.__enter__ = lambda self_: self_
+        response.__exit__ = lambda *args: False
+        return response
+
+
+class DownloadTest(unittest.TestCase):
+    def test_download_resumes_after_connection_drop(self):
+        data = bytes(range(256)) * 1000
+        flaky = Flaky(data, fail_after=70000)
+        with tempfile.TemporaryDirectory() as folder, patch.object(msp_open_data.requests, "get", flaky),                 patch.object(msp_open_data.time, "sleep"):
+            target = Path(folder) / "x.zip"
+            msp_open_data.download("https://example.test/x.zip", target)
+            self.assertEqual(target.read_bytes(), data)
+        self.assertEqual(flaky.calls, [0, 70000], "вторая попытка продолжила с места обрыва")
+
+    def test_download_gives_up_with_a_clear_error(self):
+        broken = MagicMock(side_effect=requests.ConnectionError("down"))
+        with tempfile.TemporaryDirectory() as folder, patch.object(msp_open_data.requests, "get", broken),                 patch.object(msp_open_data.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "не удалось скачать"):
+                msp_open_data.download("https://example.test/x.zip", Path(folder) / "x.zip", attempts=3)
+        self.assertEqual(broken.call_count, 3)
 
 
 class ErknmPassportTest(unittest.TestCase):

@@ -112,6 +112,8 @@ python-dotenv==1.1.1
     #   pydantic-settings
 python-jose==3.5.0
     # via max-miniapp-fastapi
+pyyaml==6.0.3
+    # via max-miniapp-fastapi
 requests==2.34.2
     # via max-miniapp-fastapi
 rsa==4.9.1

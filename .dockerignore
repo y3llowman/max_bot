@@ -11,6 +11,4 @@
 **/node_modules
 miniapp/build
 tests
-experiments.ipynb
-check_capcha.py
 *.log

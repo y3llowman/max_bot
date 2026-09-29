@@ -1,7 +1,7 @@
 # Мини-приложение MAX
 
-React 19 + TypeScript + Vite. Вёрстка по макетам из `design/` (светлая и тёмная темы,
-iOS и Android), токены и типографика — из `design/UI Kit v2.svg`.
+React 19 + TypeScript + Vite. Светлая и тёмная темы, iOS и Android; токены и типографика —
+в `src/styles`, компоненты — в `src/components`. Устройство всего проекта — в корневом README.md.
 
 ## Запуск
 
