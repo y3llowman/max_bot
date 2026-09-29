@@ -1,0 +1,1699 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Радар обязанностей — API мини-приложения",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/user/auth": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Вход: подписанный MAX initData → JWT на 12 часов; 401 — подпись неверна или устарела",
+        "operationId": "webapp_auth_api_user_auth_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user/me": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Текущий пользователь MAX",
+        "operationId": "get_me_api_user_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/company": {
+      "get": {
+        "tags": [
+          "company"
+        ],
+        "summary": "Карточка подключённой компании",
+        "operationId": "current_company_api_company_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Company"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/session": {
+      "get": {
+        "tags": [
+          "company"
+        ],
+        "summary": "Подключённая компания; 404 — компания ещё не подключена",
+        "operationId": "current_company_api_session_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Company"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "company"
+        ],
+        "summary": "Подключить компанию по ИНН: профиль из реестра МСП, сроки обязанностей; 422 — неверный ИНН, 404 — нет в реестре МСП, 409 — ведёт другой пользователь, 503 — реестр ФНС не ответил",
+        "operationId": "connect_company_api_session_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Company"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/company/refresh": {
+      "post": {
+        "tags": [
+          "company"
+        ],
+        "summary": "Перепроверить компанию в реестре МСП сейчас; ЕГРЮЛ и ЕРКНМ — в фоне",
+        "operationId": "refresh_company_api_company_refresh_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Company"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/company/profile": {
+      "get": {
+        "tags": [
+          "company"
+        ],
+        "summary": "Экран «Данные компании»: профиль, данные реестра и варианты ответов",
+        "operationId": "profile_form_api_company_profile_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileForm"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "company"
+        ],
+        "summary": "Сохранить режим, численность и поправки к реестру; обязанности пересчитываются",
+        "operationId": "save_profile_api_company_profile_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Company"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/dashboard": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Главная: открытые задачи, счётчики, ближайший срок, есть ли непрочитанное",
+        "operationId": "dashboard_api_dashboard_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardData"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/calendar": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Задачи со сроком в интервале дат from–to",
+        "operationId": "calendar_api_calendar_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "title": "From"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "title": "To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Task"
+                  },
+                  "title": "Response Calendar Api Calendar Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/feed": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Лента: о чём бот писал в чат за 90 дней и чем кончилось",
+        "operationId": "feed_api_feed_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FeedItem"
+                  },
+                  "type": "array",
+                  "title": "Response Feed Api Feed Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/tasks/{task_id}": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Экран события: почему вам, что сделать, куда сдавать, основание, штраф",
+        "operationId": "task_details_api_tasks__task_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{task_id}/submitted": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "«Выполнено»: задача закрыта, пуш о ней уходит из чата",
+        "operationId": "mark_submitted_api_tasks__task_id__submitted_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Отменить «Выполнено»",
+        "operationId": "undo_submitted_api_tasks__task_id__submitted_delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{task_id}/list": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "«В список дел»: событие на главной, пуш о нём уходит из чата",
+        "operationId": "add_to_list_api_tasks__task_id__list_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{task_id}/document": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Подготовить черновик документа (.docx) — бот пришлёт его в чат; 404 — у задачи нет документа, 502 — MAX не принял сообщение",
+        "operationId": "prepare_document_api_tasks__task_id__document_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings/notifications": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Настройки уведомлений",
+        "operationId": "get_notification_settings_api_settings_notifications_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationSettings"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Сохранить настройки уведомлений",
+        "operationId": "save_notification_settings_api_settings_notifications_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/settings/notifications/seen": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Лента просмотрена — гасит отметку непрочитанного",
+        "operationId": "mark_notifications_seen_api_settings_notifications_seen_post",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Проверка живости",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Health Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AuthRequest": {
+        "properties": {
+          "initData": {
+            "type": "string",
+            "title": "Initdata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "initData"
+        ],
+        "title": "AuthRequest"
+      },
+      "AuthResponse": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "title": "Access Token"
+          },
+          "token_type": {
+            "type": "string",
+            "const": "bearer",
+            "title": "Token Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token",
+          "token_type"
+        ],
+        "title": "AuthResponse"
+      },
+      "Benefit": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "basis": {
+            "type": "string",
+            "title": "Basis"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "basis",
+          "url"
+        ],
+        "title": "Benefit"
+      },
+      "Company": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "fullName": {
+            "type": "string",
+            "title": "Fullname"
+          },
+          "initials": {
+            "type": "string",
+            "title": "Initials"
+          },
+          "regime": {
+            "type": "string",
+            "title": "Regime"
+          },
+          "inn": {
+            "type": "string",
+            "title": "Inn"
+          },
+          "kpp": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kpp"
+          },
+          "ogrn": {
+            "type": "string",
+            "title": "Ogrn"
+          },
+          "okved": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Okved"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "headcount": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headcount"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "needsAnswers": {
+            "type": "boolean",
+            "title": "Needsanswers"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          },
+          "benefits": {
+            "items": {
+              "$ref": "#/components/schemas/Benefit"
+            },
+            "type": "array",
+            "title": "Benefits",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "fullName",
+          "initials",
+          "regime",
+          "inn",
+          "ogrn",
+          "needsAnswers",
+          "source"
+        ],
+        "title": "Company"
+      },
+      "ConnectRequest": {
+        "properties": {
+          "inn": {
+            "type": "string",
+            "pattern": "^(\\d{10}|\\d{12})$",
+            "title": "Inn"
+          }
+        },
+        "type": "object",
+        "required": [
+          "inn"
+        ],
+        "title": "ConnectRequest"
+      },
+      "Counters": {
+        "properties": {
+          "overdue": {
+            "type": "integer",
+            "title": "Overdue"
+          },
+          "soon": {
+            "type": "integer",
+            "title": "Soon"
+          },
+          "done": {
+            "type": "integer",
+            "title": "Done"
+          }
+        },
+        "type": "object",
+        "required": [
+          "overdue",
+          "soon",
+          "done"
+        ],
+        "title": "Counters"
+      },
+      "DashboardData": {
+        "properties": {
+          "counters": {
+            "$ref": "#/components/schemas/Counters"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            },
+            "type": "array",
+            "title": "Tasks"
+          },
+          "nextDue": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextdue"
+          },
+          "unread": {
+            "type": "boolean",
+            "title": "Unread"
+          }
+        },
+        "type": "object",
+        "required": [
+          "counters",
+          "tasks",
+          "unread"
+        ],
+        "title": "DashboardData"
+      },
+      "FeedItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "subtitle": {
+            "type": "string",
+            "title": "Subtitle"
+          },
+          "sentAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Sentat"
+          },
+          "due": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "done",
+              "muted"
+            ],
+            "title": "Status"
+          },
+          "listed": {
+            "type": "boolean",
+            "title": "Listed"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "warning",
+              "info"
+            ],
+            "title": "Severity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "subtitle",
+          "sentAt",
+          "status",
+          "listed",
+          "severity"
+        ],
+        "title": "FeedItem"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "Link": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "url"
+        ],
+        "title": "Link"
+      },
+      "Me": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          },
+          "first_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Name"
+          },
+          "last_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Name"
+          },
+          "language_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language Code"
+          },
+          "photo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Photo Url"
+          },
+          "is_staff": {
+            "type": "boolean",
+            "title": "Is Staff"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "is_staff"
+        ],
+        "title": "Me"
+      },
+      "NotificationSettings": {
+        "properties": {
+          "chat": {
+            "type": "boolean",
+            "title": "Chat",
+            "default": true
+          },
+          "push": {
+            "type": "boolean",
+            "title": "Push",
+            "default": false
+          },
+          "email": {
+            "type": "boolean",
+            "title": "Email",
+            "default": false
+          },
+          "emailAddress": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emailaddress"
+          },
+          "quiet": {
+            "type": "boolean",
+            "title": "Quiet",
+            "default": true
+          },
+          "quietRange": {
+            "type": "string",
+            "pattern": "^\\d{2}:\\d{2}–\\d{2}:\\d{2}$",
+            "title": "Quietrange",
+            "default": "22:00–08:00"
+          },
+          "remind": {
+            "type": "string",
+            "enum": [
+              "d30-7-1",
+              "d7-3-1",
+              "d3-0",
+              "d0"
+            ],
+            "title": "Remind",
+            "default": "d30-7-1"
+          }
+        },
+        "type": "object",
+        "title": "NotificationSettings"
+      },
+      "Option": {
+        "properties": {
+          "value": {
+            "type": "string",
+            "title": "Value"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "value",
+          "label"
+        ],
+        "title": "Option"
+      },
+      "ProfileForm": {
+        "properties": {
+          "isLegalEntity": {
+            "type": "boolean",
+            "title": "Islegalentity"
+          },
+          "regime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regime"
+          },
+          "headcount": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headcount"
+          },
+          "registryHeadcount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registryheadcount"
+          },
+          "okved": {
+            "type": "string",
+            "title": "Okved"
+          },
+          "registryOkved": {
+            "type": "string",
+            "title": "Registryokved"
+          },
+          "region": {
+            "type": "string",
+            "title": "Region"
+          },
+          "registryRegion": {
+            "type": "string",
+            "title": "Registryregion"
+          },
+          "hasLicenses": {
+            "type": "boolean",
+            "title": "Haslicenses"
+          },
+          "flags": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Flags"
+          },
+          "patentFrom": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Patentfrom"
+          },
+          "patentTo": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Patentto"
+          },
+          "options": {
+            "$ref": "#/components/schemas/ProfileOptions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "isLegalEntity",
+          "okved",
+          "registryOkved",
+          "region",
+          "registryRegion",
+          "hasLicenses",
+          "flags",
+          "options"
+        ],
+        "title": "ProfileForm"
+      },
+      "ProfileOptions": {
+        "properties": {
+          "regimes": {
+            "items": {
+              "$ref": "#/components/schemas/Option"
+            },
+            "type": "array",
+            "title": "Regimes"
+          },
+          "headcounts": {
+            "items": {
+              "$ref": "#/components/schemas/Option"
+            },
+            "type": "array",
+            "title": "Headcounts"
+          },
+          "regions": {
+            "items": {
+              "$ref": "#/components/schemas/Option"
+            },
+            "type": "array",
+            "title": "Regions"
+          },
+          "flags": {
+            "items": {
+              "$ref": "#/components/schemas/Option"
+            },
+            "type": "array",
+            "title": "Flags"
+          }
+        },
+        "type": "object",
+        "required": [
+          "regimes",
+          "headcounts",
+          "regions",
+          "flags"
+        ],
+        "title": "ProfileOptions"
+      },
+      "ProfileUpdate": {
+        "properties": {
+          "regime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regime"
+          },
+          "headcount": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headcount"
+          },
+          "okved": {
+            "type": "string",
+            "title": "Okved"
+          },
+          "region": {
+            "type": "string",
+            "title": "Region"
+          },
+          "hasLicenses": {
+            "type": "boolean",
+            "title": "Haslicenses"
+          },
+          "flags": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Flags",
+            "default": {}
+          },
+          "patentFrom": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Patentfrom"
+          },
+          "patentTo": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Patentto"
+          }
+        },
+        "type": "object",
+        "required": [
+          "okved",
+          "region",
+          "hasLicenses"
+        ],
+        "title": "ProfileUpdate"
+      },
+      "Source": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "demo": {
+            "type": "boolean",
+            "title": "Demo"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updatedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "demo",
+          "updatedAt"
+        ],
+        "title": "Source"
+      },
+      "Task": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "subtitle": {
+            "type": "string",
+            "title": "Subtitle"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "overdue",
+              "soon",
+              "planned",
+              "done"
+            ],
+            "title": "Status"
+          },
+          "due": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due"
+          },
+          "periodicity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Periodicity"
+          },
+          "listed": {
+            "type": "boolean",
+            "title": "Listed",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "subtitle",
+          "status"
+        ],
+        "title": "Task"
+      },
+      "TaskDetails": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "subtitle": {
+            "type": "string",
+            "title": "Subtitle"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "overdue",
+              "soon",
+              "planned",
+              "done"
+            ],
+            "title": "Status"
+          },
+          "due": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due"
+          },
+          "periodicity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Periodicity"
+          },
+          "listed": {
+            "type": "boolean",
+            "title": "Listed",
+            "default": false
+          },
+          "heading": {
+            "type": "string",
+            "title": "Heading"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/TaskSection"
+            },
+            "type": "array",
+            "title": "Sections"
+          },
+          "document": {
+            "type": "boolean",
+            "title": "Document",
+            "default": false
+          },
+          "next": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Task"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "subtitle",
+          "status",
+          "heading",
+          "sections"
+        ],
+        "title": "TaskDetails"
+      },
+      "TaskSection": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "icon": {
+            "type": "string",
+            "title": "Icon"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "caption": {
+            "type": "string",
+            "title": "Caption"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "steps": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Steps"
+          },
+          "link": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Link"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "icon",
+          "title",
+          "caption"
+        ],
+        "title": "TaskSection"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  }
+}

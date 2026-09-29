@@ -16,6 +16,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
 logger = logging.getLogger(__file__)
 
 from message_handler import dp

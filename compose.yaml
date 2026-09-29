@@ -1,3 +1,9 @@
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -5,7 +11,7 @@ services:
     environment:
       POSTGRES_DB: maxapp
       POSTGRES_USER: max
-      POSTGRES_PASSWORD: max
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     ports:
       - "127.0.0.1:5433:5432"
     volumes:
@@ -16,6 +22,7 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    logging: *logging
 
   backend:
     build:
@@ -25,10 +32,11 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://max:max@postgres:5432/maxapp
-      MAX_TOKEN: ${MAX_TOKEN}
-      SECRET_KEY: ${SECRET_KEY}
-      DEBUG: ${DEBUG:-true}
+      DATABASE_URL: postgresql+asyncpg://max:${POSTGRES_PASSWORD}@postgres:5432/maxapp
+      MAX_TOKEN: ${MAX_TOKEN:?set MAX_TOKEN in .env}
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+      DEBUG: ${DEBUG:-false}
+      DEMO: ${DEMO:-true}
       MAX_INIT_DATA_MAX_AGE: ${MAX_INIT_DATA_MAX_AGE:-86400}
     depends_on:
       postgres:
@@ -39,6 +47,7 @@ services:
       timeout: 5s
       retries: 12
     restart: unless-stopped
+    logging: *logging
 
   bot:
     build:
@@ -47,15 +56,17 @@ services:
     container_name: max_bot
     command: ["python", "backend/bot/main_longpooling.py"]
     environment:
-      DATABASE_URL: postgresql+asyncpg://max:max@postgres:5432/maxapp
-      MAX_TOKEN: ${MAX_TOKEN}
-      DEBUG: ${DEBUG:-true}
+      DATABASE_URL: postgresql+asyncpg://max:${POSTGRES_PASSWORD}@postgres:5432/maxapp
+      MAX_TOKEN: ${MAX_TOKEN:?set MAX_TOKEN in .env}
+      DEBUG: ${DEBUG:-false}
+      DEMO: ${DEMO:-true}
     depends_on:
       postgres:
         condition: service_healthy
       backend:
         condition: service_healthy
     restart: unless-stopped
+    logging: *logging
 
 volumes:
   postgres_data:

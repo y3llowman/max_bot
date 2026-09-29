@@ -4,7 +4,7 @@ import os
 import sys
 import unittest
 from dataclasses import asdict, replace
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -12,6 +12,7 @@ TEST_DB = os.environ.get("TEST_DATABASE_URL")
 if TEST_DB:
     os.environ["DATABASE_URL"] = TEST_DB
 os.environ.setdefault("MAX_TOKEN", "test")
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://max@localhost:5544/maxtest")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-" * 4)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
@@ -574,6 +575,67 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         cells = [c.text for t in doc.tables for row in t.rows for c in row.cells]
         self.assertIn(INN, cells)
         self.assertIn("18210501021011000110", cells)
+
+    async def test_migrations_match_models_and_adopt_old_database(self):
+        from alembic.autogenerate import compare_metadata
+        from alembic.migration import MigrationContext
+        from databases import Base
+
+        def diff(connection):
+            return compare_metadata(MigrationContext.configure(connection, opts={"compare_type": True}), Base.metadata)
+
+        async with engine.connect() as conn:
+            self.assertEqual(await conn.run_sync(diff), [])
+        async with engine.begin() as conn:
+            await conn.execute(sql("DROP TABLE alembic_version"))
+            await conn.execute(sql("ALTER TABLE users ALTER COLUMN max_user_id TYPE integer"))
+        await init_db()
+        await init_db()
+        async with engine.connect() as conn:
+            self.assertEqual(await conn.run_sync(diff), [])
+            self.assertEqual((await conn.execute(sql("SELECT version_num FROM alembic_version"))).scalar(), "0002")
+        async with SessionLocal() as db:
+            db.add(User(max_user_id=9_000_000_000_000_000_001))
+            await db.commit()
+        self.assertEqual(len(await self.events()), 0)
+
+    async def test_api_auth_and_input_errors(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            self.assertEqual((await client.get("/api/dashboard")).status_code, 401)
+            self.assertEqual((await client.get("/api/dashboard", headers={"Authorization": "Bearer nope"})).status_code, 401)
+            self.assertEqual((await client.post("/api/user/auth", json={"initData": "auth_date=1&hash=x"})).status_code, 401)
+            from sign_init_data import TEST_USER, sign
+            auth = await client.post("/api/user/auth", json={"initData": sign(TEST_USER)})
+            headers = {"Authorization": f"Bearer {auth.json()['access_token']}"}
+            self.assertEqual((await client.get("/api/user/me", headers=headers)).json()["id"], TEST_USER)
+            self.assertEqual((await client.get("/api/session", headers=headers)).status_code, 404)
+            forged = sign(TEST_USER).replace("api_check", "admin")
+            self.assertEqual((await client.post("/api/user/auth", json={"initData": forged})).status_code, 401)
+        client = await self.api()
+        self.assertEqual((await client.post("/api/session", json={"inn": "7707083890"})).status_code, 422)
+        self.assertEqual((await client.post("/api/session", json={"inn": "123"})).status_code, 422)
+
+        from app.api.routes import company as company_routes
+        with patch.object(company_routes.rmsp_client, "fetch_by_inn", lambda inn: None),                 patch.object(company_routes, "scan_in_background", AsyncMock()) as scan:
+            company = await client.post("/api/company/refresh")
+        scan.assert_awaited_once_with(INN)
+        self.assertEqual((company.status_code, company.json()["inn"]), (200, INN))
+        self.assertEqual([e.type for e in await self.events(source="msp")], ["msp.not_found"])
+
+    async def test_demo_deadlines_open_in_app_and_are_labelled(self):
+        import seed_demo_tasks
+        await seed_demo_tasks.main(INN)
+        client = await self.api()
+        tasks = (await client.get("/api/dashboard")).json()["tasks"]
+        demo = [t for t in tasks if t["subtitle"].startswith("Демо")]
+        self.assertEqual(len(demo), 5)
+        for task in demo:
+            details = await client.get(f"/api/tasks/{task['id']}")
+            self.assertEqual(details.status_code, 200, details.text)
+            self.assertIn("демо-данные", " ".join(" ".join(s.get("body") or []) for s in details.json()["sections"]))
+        from notifications import demo as tour
+        await tour.cleanup(INN)
+        self.assertEqual(await self.events(source="demo"), [])
 
     async def test_list_feed_and_closing_in_app(self):
         [event] = await worker.process_msp(INN, None, TODAY)

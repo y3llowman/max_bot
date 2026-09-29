@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.depends import get_current_user
-from core.config import MAX_BOT_TOKEN
+from app.api.schemas import AuthResponse, Me
 from databases import get_db
 from databases.users_db import User
 from core.security import create_access_token, validate_max_init_data
@@ -18,7 +18,8 @@ class AuthRequest(BaseModel):
     initData: str
 
 
-@router.post("/auth")
+@router.post("/auth", response_model=AuthResponse,
+             summary="Вход: подписанный MAX initData → JWT на 12 часов; 401 — подпись неверна или устарела")
 async def webapp_auth(payload: AuthRequest, db: AsyncSession = Depends(get_db)):
     user_data = validate_max_init_data(payload.initData)
     max_user_id = int(user_data["id"])
@@ -41,7 +42,7 @@ async def webapp_auth(payload: AuthRequest, db: AsyncSession = Depends(get_db)):
     return {"access_token": create_access_token(max_user_id), "token_type": "bearer"}
 
 
-@router.get("/me")
+@router.get("/me", response_model=Me, summary="Текущий пользователь MAX")
 async def get_me(user: User = Depends(get_current_user)):
     return {
         "id": user.max_user_id,

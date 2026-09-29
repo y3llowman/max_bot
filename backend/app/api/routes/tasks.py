@@ -14,7 +14,6 @@ from notifications.models import Notification, RadarEvent
 from notifications.planner import today_msk
 from notifications.worker import handled_in_app, send_document
 from radar.catalog import CATALOG
-from radar.obligations import BY_CODE
 from radar.render import SOURCE_URLS, build_context, cap1, company_ctx, plural, render
 
 router = APIRouter(tags=["tasks"])
@@ -133,7 +132,8 @@ async def find_event(db: AsyncSession, business: Business, task_id: int) -> Rada
     return event
 
 
-@router.get("/dashboard", response_model=DashboardData, response_model_exclude_none=True)
+@router.get("/dashboard", response_model=DashboardData, response_model_exclude_none=True,
+            summary="Главная: открытые задачи, счётчики, ближайший срок, есть ли непрочитанное")
 async def dashboard(
     business: Business = Depends(get_current_business),
     user: User = Depends(get_current_user),
@@ -159,7 +159,8 @@ async def dashboard(
     )
 
 
-@router.get("/calendar", response_model=list[Task])
+@router.get("/calendar", response_model=list[Task], response_model_exclude_none=True,
+            summary="Задачи со сроком в интервале дат from–to")
 async def calendar(
     from_: date = Query(alias="from"),
     to: date = Query(),
@@ -171,7 +172,8 @@ async def calendar(
     return [to_task(event, today) for event in (await db.execute(query)).scalars()]
 
 
-@router.get("/feed", response_model=list[FeedItem], response_model_exclude_none=True)
+@router.get("/feed", response_model=list[FeedItem], response_model_exclude_none=True,
+            summary="Лента: о чём бот писал в чат за 90 дней и чем кончилось")
 async def feed(
     business: Business = Depends(get_current_business),
     user: User = Depends(get_current_user),
@@ -197,7 +199,8 @@ async def feed(
     return items
 
 
-@router.get("/tasks/{task_id}", response_model=TaskDetails, response_model_exclude_none=True)
+@router.get("/tasks/{task_id}", response_model=TaskDetails, response_model_exclude_none=True,
+            summary="Экран события: почему вам, что сделать, куда сдавать, основание, штраф")
 async def task_details(
     task_id: int,
     business: Business = Depends(get_current_business),
@@ -206,7 +209,7 @@ async def task_details(
     today = today_msk()
     event = await find_event(db, business, task_id)
     task = to_task(event, today)
-    if event.type == "law.upcoming" or event.payload.get("code") in BY_CODE:
+    if event.type in ("deadline", "law.upcoming"):
         sections = to_sections(event.payload)
     else:
         company = company_ctx(None, {"name": business.name, "ogrn": business.ogrn}, business.inn)
@@ -227,7 +230,8 @@ async def task_details(
     )
 
 
-@router.post("/tasks/{task_id}/submitted", status_code=204)
+@router.post("/tasks/{task_id}/submitted", status_code=204,
+             summary="«Выполнено»: задача закрыта, пуш о ней уходит из чата")
 async def mark_submitted(
     task_id: int,
     business: Business = Depends(get_current_business),
@@ -240,7 +244,7 @@ async def mark_submitted(
     await handled_in_app(user.max_user_id, event.id)
 
 
-@router.delete("/tasks/{task_id}/submitted", status_code=204)
+@router.delete("/tasks/{task_id}/submitted", status_code=204, summary="Отменить «Выполнено»")
 async def undo_submitted(
     task_id: int,
     business: Business = Depends(get_current_business),
@@ -251,7 +255,8 @@ async def undo_submitted(
     await db.commit()
 
 
-@router.post("/tasks/{task_id}/list", status_code=204)
+@router.post("/tasks/{task_id}/list", status_code=204,
+             summary="«В список дел»: событие на главной, пуш о нём уходит из чата")
 async def add_to_list(
     task_id: int,
     business: Business = Depends(get_current_business),
@@ -264,7 +269,9 @@ async def add_to_list(
     await handled_in_app(user.max_user_id, event.id)
 
 
-@router.post("/tasks/{task_id}/document", status_code=204)
+@router.post("/tasks/{task_id}/document", status_code=204,
+             summary="Подготовить черновик документа (.docx) — бот пришлёт его в чат; "
+                     "404 — у задачи нет документа, 502 — MAX не принял сообщение")
 async def prepare_document(
     task_id: int,
     business: Business = Depends(get_current_business),

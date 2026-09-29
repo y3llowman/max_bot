@@ -1,7 +1,6 @@
 import asyncio
 import html
 import logging
-import re
 from dataclasses import asdict
 from datetime import datetime, timezone
 
@@ -14,7 +13,8 @@ from maxapi.types import BotStarted, ButtonsPayload, CallbackButton, MessageCall
 from maxapi.context import BaseContext, State, StatesGroup
 
 from bot.client import bot, bot_app
-from core.config import DEBUG
+from core.config import DEMO
+from core.inn import is_valid_inn
 from data_fetching import rmsp_client
 from databases.businesses_db import Business, CompanyTaken, current_business, save_business
 from databases.engine_start import SessionLocal
@@ -33,24 +33,6 @@ dp = Dispatcher()
 
 class OrderState(StatesGroup):
     waiting_for_inn = State()
-
-
-def is_valid_inn(inn: str) -> bool:
-    if not re.fullmatch(r"\d{10}|\d{12}", inn):
-        return False
-
-    digits = [int(d) for d in inn]
-
-    def checksum(coefficients: tuple[int, ...]) -> int:
-        return sum(c * d for c, d in zip(coefficients, digits)) % 11 % 10
-
-    if len(inn) == 10:
-        return checksum((2, 4, 10, 3, 5, 9, 4, 6, 8)) == digits[9]
-
-    return (
-        checksum((7, 2, 4, 10, 3, 5, 9, 4, 6, 8)) == digits[10]
-        and checksum((3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8)) == digits[11]
-    )
 
 
 ASK_INN = "Пришлите ИНН компании или ИП — 10 или 12 цифр. Профиль соберём сами из реестров ФНС."
@@ -228,7 +210,7 @@ async def on_profile(event: MessageCreated):
 TOUR_RUNNING = ("Идёт демо-тур /demo — одновременно работает только одно демо. Пройдите его до конца или "
                 "нажмите «⏹ Стоп» под карточкой шага, потом повторите команду.")
 
-if DEBUG:
+if DEMO:
     @dp.message_created(Command("demo_remind"))
     async def on_demo_remind(event: MessageCreated):
         if demo_tour.running(event.message.sender.user_id):
@@ -278,7 +260,7 @@ if DEBUG:
 @dp.message_created(states=OrderState.waiting_for_inn)
 async def on_inn(event: MessageCreated, context: BaseContext):
     inn = (event.message.body.text or "").strip()
-    logger.info("Пользователь %s ввёл ИНН: %s", 'тип:' + str(type(inn)), 'ИНН:' + inn)
+    logger.info("user %s sent INN %s", event.message.sender.user_id if event.message.sender else None, inn)
 
     if not is_valid_inn(inn):
         await event.message.answer(

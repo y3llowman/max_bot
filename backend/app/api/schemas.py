@@ -9,6 +9,21 @@ class CamelModel(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
 
+class AuthResponse(BaseModel):
+    access_token: str
+    token_type: Literal["bearer"]
+
+
+class Me(BaseModel):
+    id: int
+    username: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    language_code: str | None = None
+    photo_url: str | None = None
+    is_staff: bool
+
+
 class Source(CamelModel):
     name: str
     demo: bool

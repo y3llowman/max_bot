@@ -5,11 +5,12 @@ from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.depends import get_current_business, get_current_user
+from core.inn import is_valid_inn
 from app.api.schemas import Benefit, Company, Option, ProfileForm, ProfileOptions, ProfileUpdate, Source
 from data_fetching import rmsp_client
 from databases import get_db
@@ -30,6 +31,13 @@ OKVED = re.compile(r"\d{2}(?:\.\d{1,2}){0,2}")
 
 class ConnectRequest(BaseModel):
     inn: str = Field(pattern=r"^(\d{10}|\d{12})$")
+
+    @field_validator("inn")
+    @classmethod
+    def checksum(cls, inn: str) -> str:
+        if not is_valid_inn(inn):
+            raise ValueError("INN checksum is invalid")
+        return inn
 
 
 def registry_okved(business: Business) -> str:
@@ -67,11 +75,15 @@ async def to_company(db: AsyncSession, business: Business) -> Company:
     )
 
 
-async def load_from_registry(db: AsyncSession, user: User, inn: str) -> Business:
+async def fetch_registry(inn: str) -> rmsp_client.RmspRecord | None:
     try:
-        record = await asyncio.to_thread(rmsp_client.fetch_by_inn, inn)
+        return await asyncio.to_thread(rmsp_client.fetch_by_inn, inn)
     except Exception as exc:
         raise HTTPException(status_code=503, detail="SME registry is unavailable") from exc
+
+
+async def load_from_registry(db: AsyncSession, user: User, inn: str) -> Business:
+    record = await fetch_registry(inn)
     if record is None:
         raise HTTPException(status_code=404, detail="INN not found in the SME registry")
     try:
@@ -93,8 +105,10 @@ async def continue_in_chat(max_user_id: int, card: str | None = None) -> None:
         logger.exception("could not continue onboarding in chat for %s", max_user_id)
 
 
-@router.get("/session", response_model=Company, response_model_exclude_none=True)
-@router.get("/company", response_model=Company, response_model_exclude_none=True)
+@router.get("/session", response_model=Company, response_model_exclude_none=True,
+            summary="Подключённая компания; 404 — компания ещё не подключена")
+@router.get("/company", response_model=Company, response_model_exclude_none=True,
+            summary="Карточка подключённой компании")
 async def current_company(
     business: Business = Depends(get_current_business),
     db: AsyncSession = Depends(get_db),
@@ -102,7 +116,10 @@ async def current_company(
     return await to_company(db, business)
 
 
-@router.post("/session", response_model=Company, response_model_exclude_none=True)
+@router.post("/session", response_model=Company, response_model_exclude_none=True,
+             summary="Подключить компанию по ИНН: профиль из реестра МСП, сроки обязанностей; "
+                     "422 — неверный ИНН, 404 — нет в реестре МСП, 409 — ведёт другой пользователь, "
+                     "503 — реестр ФНС не ответил")
 async def connect_company(
     payload: ConnectRequest,
     background: BackgroundTasks,
@@ -115,19 +132,26 @@ async def connect_company(
     return await to_company(db, business)
 
 
-@router.post("/company/refresh", response_model=Company, response_model_exclude_none=True)
+@router.post("/company/refresh", response_model=Company, response_model_exclude_none=True,
+             summary="Перепроверить компанию в реестре МСП сейчас; ЕГРЮЛ и ЕРКНМ — в фоне")
 async def refresh_company(
     background: BackgroundTasks,
     business: Business = Depends(get_current_business),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    business = await load_from_registry(db, user, business.inn)
+    record = await fetch_registry(business.inn)
+    if record is None:
+        await registry_loaded(business.inn, None)
+    else:
+        business = await save_business(db, user.id, record)
+        await registry_loaded(business.inn, asdict(record))
     background.add_task(scan_in_background, business.inn)
     return await to_company(db, business)
 
 
-@router.get("/company/profile", response_model=ProfileForm, response_model_exclude_none=True)
+@router.get("/company/profile", response_model=ProfileForm, response_model_exclude_none=True,
+            summary="Экран «Данные компании»: профиль, данные реестра и варианты ответов")
 async def profile_form(
     business: Business = Depends(get_current_business),
     db: AsyncSession = Depends(get_db),
@@ -158,7 +182,8 @@ def invalid(detail: str) -> HTTPException:
     return HTTPException(status_code=422, detail=detail)
 
 
-@router.put("/company/profile", response_model=Company, response_model_exclude_none=True)
+@router.put("/company/profile", response_model=Company, response_model_exclude_none=True,
+            summary="Сохранить режим, численность и поправки к реестру; обязанности пересчитываются")
 async def save_profile(
     payload: ProfileUpdate,
     background: BackgroundTasks,

@@ -1,0 +1,287 @@
+version: "1.0"
+solution: "Радар обязанностей — бот и мини-приложение MAX для малого бизнеса"
+team: "t267_hakaton_max_bot"
+base_url: "https://hackaton267max.webtm.ru"
+openapi: "openapi.json"
+test_data: "test-data.json"
+
+roles:
+  anonymous:
+    description: "Запрос без заголовка Authorization."
+  user:
+    description: >-
+      Тестовая учётная запись MAX с id 9000000000000000001. Вход в API — по initData, подписанному
+      токеном бота, как это делает клиент MAX. Получить initData: MAX_TOKEN=<токен бота> python backend/sign_init_data.py
+      (скрипт печатает строку initData, она действительна 24 часа). Затем POST /api/user/auth и заголовок
+      Authorization: Bearer <access_token> — токен действует 12 часов.
+    auth:
+      type: bearer
+      obtain:
+        method: POST
+        path: /api/user/auth
+        headers:
+          Content-Type: application/json
+        body:
+          initData: "<вывод python backend/sign_init_data.py>"
+        token_field: access_token
+
+checks:
+  - id: health
+    method: GET
+    path: /health
+    role: anonymous
+    expected_status: [200]
+    response:
+      content_type: application/json
+      required_fields: [status]
+
+  - id: auth_rejects_bad_signature
+    method: POST
+    path: /api/user/auth
+    role: anonymous
+    headers:
+      Content-Type: application/json
+    body:
+      initData: "auth_date=1&hash=0"
+    expected_status: [401]
+    response:
+      content_type: application/json
+      required_fields: [detail]
+
+  - id: auth
+    method: POST
+    path: /api/user/auth
+    role: anonymous
+    headers:
+      Content-Type: application/json
+    body:
+      initData: "<вывод python backend/sign_init_data.py>"
+    expected_status: [200]
+    response:
+      content_type: application/json
+      required_fields: [access_token, token_type]
+
+  - id: token_required
+    method: GET
+    path: /api/dashboard
+    role: anonymous
+    expected_status: [401]
+    response:
+      content_type: application/json
+      required_fields: [detail]
+
+  - id: me
+    method: GET
+    path: /api/user/me
+    role: user
+    expected_status: [200]
+    response:
+      content_type: application/json
+      required_fields: [id, is_staff]
+
+  - id: connect_invalid_inn
+    method: POST
+    path: /api/session
+    role: user
+    headers:
+      Content-Type: application/json
+    body:
+      inn: "7707083890"
+    expected_status: [422]
+    response:
+      content_type: application/json
+      required_fields: [detail]
+
+  - id: connect_inn_not_in_registry
+    method: POST
+    path: /api/session
+    role: user
+    headers:
+      Content-Type: application/json
+    body:
+      inn: "7707083893"
+    expected_status: [404, 503]
+    response:
+      content_type: application/json
+      required_fields: [detail]
+
+  - id: connect
+    method: POST
+    path: /api/session
+    role: user
+    headers:
+      Content-Type: application/json
+    body:
+      inn: "3666155612"
+    expected_status: [200, 503]
+    response:
+      content_type: application/json
+      required_fields: [name, fullName, initials, regime, inn, ogrn, needsAnswers, source]
+
+  - id: session
+    method: GET
+    path: /api/session
+    role: user
+    expected_status: [200]
+    response:
+      content_type: application/json
+      required_fields: [name, inn, ogrn, regime, needsAnswers, source]
+
+  - id: profile_form
+    method: GET
+    path: /api/company/profile
+    role: user
+    expected_status: [200]
+    response:
+      content_type: application/json
+      required_fields: [isLegalEntity, okved, registryOkved, region, registryRegion, hasLicenses, flags, options]
+
+  - id: profile_save
+    method: PUT
+    path: /api/company/profile
+    role: user
+    headers:
+      Content-Type: application/json
+    body:
+      regime: "usn_income"
+      headcount: "1"
+      okved: "56.10"
+      region: "36"
+      hasLicenses: false
+      flags: {}
+      patentFrom: null
+      patentTo: null
+    expected_status: [200]
+    response:
+      content_type: application/json
+      required_fields: [inn, regime, needsAnswers]
+
+  - id: profile_save_invalid
+    method: PUT
+    path: /api/company/profile
+    role: user
+    headers:
+      Content-Type: application/json
+    body:
+      regime: "usn_income"
+      headcount: "1"
+      okved: "5"
+      region: "36"
+      hasLicenses: false
+      flags: {}
+    expected_status: [422]
+    response:
+      content_type: application/json
+      required_fields: [detail]
+
+  - id: dashboard
+    method: GET
+    path: /api/dashboard
+    role: user
+    expected_status: [200]
+    response:
+      content_type: application/json
+      required_fields: [counters, tasks, unread]
+
+  - id: calendar
+    method: GET
+    path: /api/calendar
+    role: user
+    query:
+      from: "2026-10-01"
+      to: "2027-03-31"
+    expected_status: [200]
+    response:
+      content_type: application/json
+      type: array
+      item_required_fields: [id, title, subtitle, status, due]
+
+  - id: task
+    method: GET
+    path: /api/tasks/{task_id}
+    role: user
+    path_params:
+      task_id: "id первой задачи из ответа проверки calendar"
+    expected_status: [200]
+    response:
+      content_type: application/json
+      required_fields: [id, title, subtitle, status, heading, sections]
+
+  - id: task_not_found
+    method: GET
+    path: /api/tasks/999999999
+    role: user
+    expected_status: [404]
+    response:
+      content_type: application/json
+      required_fields: [detail]
+
+  - id: task_to_list
+    method: POST
+    path: /api/tasks/{task_id}/list
+    role: user
+    path_params:
+      task_id: "id из проверки task"
+    expected_status: [204]
+
+  - id: task_done
+    method: POST
+    path: /api/tasks/{task_id}/submitted
+    role: user
+    path_params:
+      task_id: "id из проверки task"
+    expected_status: [204]
+
+  - id: task_undo
+    method: DELETE
+    path: /api/tasks/{task_id}/submitted
+    role: user
+    path_params:
+      task_id: "id из проверки task"
+    expected_status: [204]
+
+  - id: feed
+    method: GET
+    path: /api/feed
+    role: user
+    expected_status: [200]
+    response:
+      content_type: application/json
+      type: array
+
+  - id: settings
+    method: GET
+    path: /api/settings/notifications
+    role: user
+    expected_status: [200]
+    response:
+      content_type: application/json
+      required_fields: [chat, push, email, quiet, quietRange, remind]
+
+  - id: settings_save
+    method: PUT
+    path: /api/settings/notifications
+    role: user
+    headers:
+      Content-Type: application/json
+    body:
+      chat: true
+      push: false
+      email: false
+      quiet: true
+      quietRange: "22:00–08:00"
+      remind: "d30-7-1"
+    expected_status: [204]
+
+  - id: settings_invalid
+    method: PUT
+    path: /api/settings/notifications
+    role: user
+    headers:
+      Content-Type: application/json
+    body:
+      remind: "d99"
+    expected_status: [422]
+    response:
+      content_type: application/json
+      required_fields: [detail]

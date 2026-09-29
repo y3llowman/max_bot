@@ -8,6 +8,8 @@ aiohttp==3.14.3
     # via maxapi
 aiosignal==1.4.0
     # via aiohttp
+alembic==1.20.0
+    # via max-miniapp-fastapi
 annotated-types==0.7.0
     # via pydantic
 anyio==4.11.0
@@ -67,8 +69,12 @@ lxml==6.1.3
     # via python-docx
 magic-filter==1.0.12
     # via maxapi
+mako==1.4.3
+    # via alembic
 markupsafe==3.0.3
-    # via jinja2
+    # via
+    #   jinja2
+    #   mako
 maxapi==1.2.2
     # via max-miniapp-fastapi
 multidict==6.9.1
@@ -115,13 +121,16 @@ six==1.17.0
 sniffio==1.3.1
     # via anyio
 sqlalchemy==2.0.54
-    # via max-miniapp-fastapi
+    # via
+    #   alembic
+    #   max-miniapp-fastapi
 starlette==0.48.0
     # via fastapi
 typing-extensions==4.15.0
     # via
     #   aiohttp
     #   aiosignal
+    #   alembic
     #   anyio
     #   fastapi
     #   pydantic
