@@ -18,7 +18,6 @@ interface WebAppBridge {
   openMaxLink(url: string): void;
   close(): void;
   shareMaxContent(params: { text?: string; link?: string }): void;
-  openCodeReader(fileSelect?: boolean): Promise<string> | string;
   HapticFeedback: {
     impactOccurred(style: "soft" | "light" | "medium" | "heavy" | "rigid"): void;
     notificationOccurred(type: "error" | "success" | "warning"): void;
@@ -109,21 +108,6 @@ export function openChat(): void {
     app.openMaxLink(chatUrl());
     app.close();
   } else window.open(chatUrl(), "_blank", "noopener");
-}
-
-export async function scanQr(): Promise<string | null> {
-  const app = wa();
-  if (!app) return null;
-  try {
-    const result = await app.openCodeReader(false);
-    return result || null;
-  } catch {
-    return null;
-  }
-}
-
-export function canScanQr(): boolean {
-  return inMax();
 }
 
 export const haptic = {

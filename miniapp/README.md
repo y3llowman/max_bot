@@ -141,7 +141,7 @@ Payload — до 512 символов, только `[A-Za-z0-9_-]` (огран�
 ## MAX Bridge
 
 `src/max/bridge.ts` — обёртка над `window.WebApp` по dev.max.ru/docs/webapps/bridge:
-кнопка «назад» на вложенных экранах, `openMaxLink` для «В чат MAX», сканер QR для ИНН,
+кнопка «назад» на вложенных экранах, `openMaxLink` для «В чат MAX»,
 тактильный отклик, `start_param`. Вне MAX всё работает на заглушках.
 
 Тему MAX не передаёт — в документации этого нет. Берём системную (`prefers-color-scheme`),

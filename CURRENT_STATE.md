@@ -96,9 +96,9 @@ _Обновлено: 30.09.2026, ночь перед сдачей._ Идея п�
 |---|---|
 | `index.html` | Точка входа, подключает MAX Bridge; защита от двойного внедрения скрипта MAX |
 | `src/main.tsx`, `App.tsx`, `session.tsx` | Запуск и тема; маршруты (hash-роутер) и повторное открытие уже открытого приложения; сессия и текущая компания |
-| `src/max/bridge.ts` | Обёртка MAX Bridge: `initData`, диплинки, «Назад», ссылки, QR, тактильный отклик, закрытие; заглушки вне MAX |
+| `src/max/bridge.ts` | Обёртка MAX Bridge: `initData`, диплинки, «Назад», ссылки, тактильный отклик, закрытие; заглушки вне MAX |
 | `src/api/client.ts`, `contract.ts`, `types.ts`, `mock.ts` | Клиент API (initData → JWT, повторный вход при 401); контракт; типы; моки для разработки без бэкенда |
-| `src/screens/Launch.tsx`, `Splash.tsx`, `Connect.tsx` | Разбор диплинка `startapp`; загрузка и ошибки входа; подключение по ИНН или QR |
+| `src/screens/Launch.tsx`, `Splash.tsx`, `Connect.tsx` | Разбор диплинка `startapp`; загрузка и ошибки входа; подключение по ИНН |
 | `src/screens/Dashboard.tsx`, `Calendar.tsx`, `Feed.tsx` | Главная («Сегодня», «На неделе», «Список дел»); календарь; лента бота |
 | `src/screens/Task.tsx` | Экран события: разделы, «Выполнено», «Подготовить документ», «В список дел» |
 | `src/screens/Profile.tsx`, `ProfileEdit.tsx`, `Notifications.tsx` | Профиль; «Данные компании» с реквизитами; настройки уведомлений |

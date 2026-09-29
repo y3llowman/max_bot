@@ -153,7 +153,7 @@ hackaton267max.webtm.ru {
 | Сервис | Зачем | Как получаем | Документация |
 |---|---|---|---|
 | MAX Bot API | Сообщения, кнопки, файлы | Библиотека maxapi, long polling | [dev.max.ru](https://dev.max.ru/docs-api) |
-| MAX Bridge | Вход в мини-приложение, QR-сканер, «Назад», ссылки | Скрипт `st.max.ru/js/max-web-app.js` | [dev.max.ru](https://dev.max.ru/docs/webapps/bridge) |
+| MAX Bridge | Вход в мини-приложение, «Назад», ссылки, чат с ботом, тактильный отклик | Скрипт `st.max.ru/js/max-web-app.js` | [dev.max.ru](https://dev.max.ru/docs/webapps/bridge) |
 | Реестр МСП — открытые данные ФНС | Профиль компании по ИНН; ежемесячная сверка | Набор `7707329152-rsmp` (XML со схемой XSD, обновляется 10-го числа). Ссылка на свежий архив — из паспорта набора `meta.csv`; записи — в таблицу `msp_registry`; поиск по ИНН — в своей базе | [nalog.gov.ru/opendata/7707329152-rsmp](https://www.nalog.gov.ru/opendata/7707329152-rsmp/) |
 | ЕРКНМ — открытые данные Генпрокуратуры | Проверки, профилактические визиты, предостережения | Паспорт месячного набора `…/7710146102-inspection-<год>-<месяц>.xml` → архив XML → поиск по ИНН | Паспорт набора на proverki.gov.ru |
 | Официальное опубликование, publication.pravo.gov.ru | Новые законы и приказы | Метод `/api/Documents` (список актов за день, поиск изменяемого акта по номеру и дате) | [publication.pravo.gov.ru/help](http://publication.pravo.gov.ru/help) |
