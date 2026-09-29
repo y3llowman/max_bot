@@ -1,5 +1,3 @@
-import csv
-import io
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -39,15 +37,19 @@ class MspRecord:
     is_social: bool
 
 
+ARCHIVE = re.compile(r"https://file\.nalog\.ru/opendata/7707329152-rsmp/data-(\d{2})(\d{2})(\d{4})-structure-\d{8}\.zip")
+
+
 def latest_url() -> str:
-    text = requests.get(PASSPORT_URL, headers=HEADERS, timeout=60).text
-    versions = []
-    for row in csv.reader(io.StringIO(text)):
-        found = re.fullmatch(r"data-(\d{2})(\d{2})(\d{4})-structure-\d{8}\.zip", row[0]) if row else None
-        if found and len(row) > 1:
-            versions.append((found.group(3) + found.group(2) + found.group(1), row[1]))
+    versions = set()
+    for source in (DATASET_URL, PASSPORT_URL):
+        try:
+            text = requests.get(source, headers=HEADERS, timeout=60).text
+        except requests.RequestException:
+            continue
+        versions.update((m.group(3) + m.group(2) + m.group(1), m.group(0)) for m in ARCHIVE.finditer(text))
     if not versions:
-        raise RuntimeError("no data versions in the SME registry passport")
+        raise RuntimeError("не найдена ссылка на архив реестра МСП ни на странице набора, ни в паспорте")
     return max(versions)[1]
 
 

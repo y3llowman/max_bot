@@ -75,7 +75,7 @@ def app_keyboard(app: dict):
 
 
 def edit_button(app: dict) -> OpenAppButton:
-    return OpenAppButton(text="✏️ Исправить в приложении", **app, payload="profile_edit")
+    return OpenAppButton(text="✏️ Исправить/Дополнить в приложении", **app, payload="profile_edit")
 
 
 def question_keyboard(question: str, legal_entity: bool):
@@ -308,10 +308,10 @@ async def show_found(max_user_id: int, business: Business) -> None:
     async with SessionLocal() as db:
         profile = await worker.load_profile(db, business.inn)
     app = await bot_app()
-    keyboard = ButtonsPayload(buttons=[[CallbackButton(text="✅ Да, всё верно", payload="reg:ok")],
+    keyboard = ButtonsPayload(buttons=[[CallbackButton(text="✅ Сохранить", payload="reg:ok")],
                                        [edit_button(app)]]).pack()
     source = msp_registry.source_note(await msp_registry.current_load())
-    mid = await say(max_user_id, "Нашли вашу компанию:\n" + company_card(business, profile, source) + "\n\nВсё верно?", keyboard)
+    mid = await say(max_user_id, "Нашли вашу компанию:\n" + company_card(business, profile, source) + "\n\nВсё верно? Дополните недостающие данные в приложении", keyboard)
     await worker.hold(max_user_id, mid)
 
 

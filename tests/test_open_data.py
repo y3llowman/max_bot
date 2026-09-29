@@ -72,9 +72,18 @@ class MspOpenDataTest(unittest.TestCase):
             self.assertEqual(msp_open_data.make_slice(archive, ["7743212897", "7707083893"], target), ["7743212897"])
             self.assertEqual([r.inn for _, r in msp_open_data.read_slice(target)], ["7743212897"])
 
-    def test_latest_version_from_passport(self):
-        with patch.object(msp_open_data.requests, "get", return_value=response(text=META)):
+    def test_latest_version_comes_from_page_or_passport(self):
+        page = '<a href="https://file.nalog.ru/opendata/7707329152-rsmp/data-10092026-structure-12052026.zip">data</a>'
+        pages = {msp_open_data.DATASET_URL: page, msp_open_data.PASSPORT_URL: META}
+        with patch.object(msp_open_data.requests, "get", lambda url, **kw: response(text=pages[url])):
+            self.assertTrue(msp_open_data.latest_url().endswith("data-10092026-structure-12052026.zip"),
+                            "паспорт отстаёт на выпуск — берём то, что новее")
+        pages[msp_open_data.DATASET_URL] = "нет ссылок"
+        with patch.object(msp_open_data.requests, "get", lambda url, **kw: response(text=pages[url])):
             self.assertTrue(msp_open_data.latest_url().endswith("data-10082026-structure-12052026.zip"))
+        with patch.object(msp_open_data.requests, "get", lambda url, **kw: response(text="")):
+            with self.assertRaisesRegex(RuntimeError, "не найдена ссылка"):
+                msp_open_data.latest_url()
 
     def test_bundled_slice_is_official_format(self):
         records = {r.inn: r for _, r in msp_open_data.read_slice()}
