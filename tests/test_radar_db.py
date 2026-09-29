@@ -797,7 +797,7 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         _, text, kb = say.await_args.args
         self.assertTrue(text.startswith("Нашли вашу компанию:"))
         self.assertIn("Режим налогообложения: в открытых реестрах его нет — спросим", text)
-        self.assertTrue(text.endswith("Всё верно?"))
+        self.assertTrue(text.endswith("Дополните недостающие данные в приложении"))
         self.assertEqual([(b.type, b.payload) for row in kb.payload.buttons for b in row],
                          [("callback", "reg:ok"), ("open_app", "profile_edit")])
         async with SessionLocal() as db:
