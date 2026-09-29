@@ -1,20 +1,3 @@
-"""Новые законы → каких компаний они касаются. Без OCR и без LLM.
-
-Полный текст акта ненадёжен как признак: «работодатель» или «налогоплательщик» встречаются
-вскользь почти в любом акте, и словарь по всему тексту давал ложные срабатывания (проверено
-27.09.2026). Поэтому тему акта определяем по тому, ЧТО он меняет:
-  1. название акта («Об утверждении формы расчёта по страховым взносам…»);
-  2. названия актов, в которые вносятся изменения: из названия («…в Федеральный закон «О…»»),
-     по номеру через API портала («…в постановление Правительства от 31 мая 2025 г. № 819»)
-     или из строк текста «Внести в …» / «В постановлении … «…»»;
-  3. номера статей Налогового кодекса и КоАП: статья → глава → тема (346.12 — УСН, 419 — взносы).
-Тема знает, кого касается (как обязанности в obligations.py): applies(профиль) → «почему вам».
-Признаков, которых нет в реестрах (касса, маркировка, самозанятые…), бот не угадывает, а
-спрашивает «да/нет» один раз — когда вышел первый акт на эту тему.
-
-Акты для госорганов (служба, должности, бюджеты, регламенты ведомств) отсекаются по названию.
-Проверено на всех актах pravo.gov.ru за сентябрь 2026 и федеральных законах за июнь–август 2026.
-"""
 from __future__ import annotations
 
 import re
@@ -29,14 +12,10 @@ from radar.obligations import quota as quota_applies
 
 
 def norm(text: str | None) -> str:
-    """Нижний регистр, ё → е, одинарные пробелы, «автоматизированная упрощённая…» → «аусн»
-    (иначе АУСН посчиталась бы ещё и упрощёнкой)."""
     t = " ".join((text or "").replace("ё", "е").replace("Ё", "Е").split()).lower()
     return re.sub(r"автоматизированн\w* упрощенн\w*(?: систем\w* налогообложени\w*)?", "аусн", t)
 
 
-# ---------------------------------------------------------------- кому адресован акт
-# Акты для государства, а не для бизнеса. Проверяется название самого акта и каждого изменяемого.
 NOT_BUSINESS = re.compile(
     r"государственн\w* (?:гражданск\w* )?служб|гражданск\w* служащ|муниципальн\w* служб|должност\w* федеральн|"
     r"замещ\w* (?:отдельн\w* )?должност|претендующ|создаваем\w* для выполнения задач|перечн\w* должност|"
@@ -52,19 +31,15 @@ NOT_BUSINESS = re.compile(
     r"оплат\w* труда работников (?:федеральн|государственн|муниципальн)|"
     r"о межведомственн|о комиссии|о совете\b|о рабочей группе|классн\w* чин")
 
-# «О внесении изменений в …», «О признании утратившими силу …»: тема — в изменяемых актах
 AMENDMENT = re.compile(r"^\W*(?:о внесении изменени|о признании утратившим|о приостановлении|об изменении)")
 
 MONTHS = {m: i for i, m in enumerate(("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа",
                                       "сентября", "октября", "ноября", "декабря"), start=1)}
-# «…в постановление Правительства Российской Федерации от 31 мая 2025 г. № 819»,
-# «…в приложение к приказу Минтранса России от 1 июня 2026 г. № 262», «…от 29.11.2022 № 304»
 ACT_REF = re.compile(r"(постановлени|приказ)\w*[^«\"]{0,160}? от (?:(\d{1,2}) (" + "|".join(MONTHS)
                      + r") (\d{4}) г\.?|(\d{2})\.(\d{2})\.(\d{4})) № ([\w\-/]+)")
 
 
 def act_refs(name: str) -> list[tuple[str, str, date]]:
-    """Акты, названные в заголовке только номером и датой: (блок портала, номер, дата подписания)."""
     out = []
     for kind, d, m, y, d2, m2, y2, number in ACT_REF.findall(norm(name)):
         signed = date(int(y), MONTHS[m], int(d)) if d else date(int(y2), int(m2), int(d2))
@@ -73,18 +48,15 @@ def act_refs(name: str) -> list[tuple[str, str, date]]:
 
 
 def needs_more(name: str) -> bool:
-    """«О внесении изменений в отдельные законодательные акты», «…в часть вторую Налогового кодекса»,
-    «…в постановление … № 819»: из названия не понять, что меняется."""
     t = norm(name)
     return bool(AMENDMENT.search(t)) and (not re.search(r"[«\"]", t) or bool(NK.search(t) or KOAP.search(t)))
 
 
-# ---------------------------------------------------------------- признаки, которых нет в реестрах
 @dataclass(frozen=True)
 class Flag:
-    question: str     # спрашиваем, когда вышел первый акт на эту тему
-    reason: str       # «почему вам» при ответе «да»
-    label: str        # строка на экране «Данные компании»
+    question: str
+    reason: str
+    label: str
 
 
 FLAGS = {
@@ -104,15 +76,14 @@ FLAGS = {
 }
 
 
-# ---------------------------------------------------------------- темы
 @dataclass(frozen=True)
 class Topic:
     code: str
-    pattern: str | None                      # regex по названиям (после norm); None — только по статьям
-    applies: Callable[[Profile], str | None]  # «почему вам» или None
-    action: str                              # что проверить — рекомендация бота
-    flag: str | None = None                  # признак из FLAGS: «да» — касается, не знаем — спросим
-    obligations: tuple[str, ...] = ()        # задачи из obligations.py, которые акт может изменить
+    pattern: str | None
+    applies: Callable[[Profile], str | None]
+    action: str
+    flag: str | None = None
+    obligations: tuple[str, ...] = ()
 
 
 def regime(*regimes: str) -> Callable[[Profile], str | None]:
@@ -242,20 +213,17 @@ TOPIC_RU = {
     "cargo": "грузоперевозки", "tourism": "туризм", "pharma": "лекарства", "consumers": "потребители",
 }
 
-# Статья НК РФ → тема: (с, по) включительно; первое совпадение. Часть первая — только статьи
-# об обязанностях налогоплательщика: ЕНС, уплата, уведомления, требования, пени, блокировка счёта,
-# декларации, проверки, ответственность.
 NK_ARTICLES = (
     ((11, 3), (11, 3), "general"), ((23, 0), (24, 99), "general"), ((45, 0), (48, 99), "general"),
     ((52, 0), (58, 99), "general"), ((69, 0), (71, 99), "general"), ((75, 0), (81, 99), "general"),
     ((88, 0), (101, 99), "general"), ((119, 0), (129, 99), "general"),
     ((143, 0), (178, 99), "vat"),
-    ((227, 1), (227, 1), "foreign"),            # фиксированные авансы по НДФЛ иностранцев с патентом
+    ((227, 1), (227, 1), "foreign"),
     ((207, 0), (233, 99), "ndfl"),
     ((246, 0), (333, 0), "profit"),
     ((346, 11), (346, 25), "usn"),
     ((346, 43), (346, 53), "psn"),
-    ((410, 0), (418, 99), "retail"),            # торговый сбор
+    ((410, 0), (418, 99), "retail"),
     ((419, 0), (432, 99), "insurance"),
 )
 KOAP_ARTICLES = {
@@ -272,8 +240,6 @@ OTHER_ACT = re.compile(r"\s*(?:федеральн\w* закон|закон|ук�
 
 
 def article_refs(fragment: str) -> list[tuple[int, int]]:
-    """«статьи 346 12 и 346 13», «статью 333-33», «статей 14.69 - 14.71» → [(346, 12), …].
-    Ссылки на статьи других законов («статьей 12 Федерального закона…») пропускаем."""
     out = []
     for m in ARTICLES.finditer(fragment):
         if OTHER_ACT.match(fragment, m.end()):
@@ -296,8 +262,6 @@ KOAP = re.compile(r"кодекс\w* российской федерации об
 
 
 def topics_in(name: str) -> set[str]:
-    """Темы по названию: словарь + статьи НК и КоАП, если они названы («…в статьи 166 и 168 части
-    второй Налогового кодекса…»). Название госорганам — пустое множество."""
     t = norm(name)
     if NOT_BUSINESS.search(t):
         return set()
@@ -309,9 +273,6 @@ def topics_in(name: str) -> set[str]:
     return found
 
 
-# ---------------------------------------------------------------- текст акта
-# Строки, в которых акт называет, что он меняет: «Внести в Федеральный закон от … № … "О…"»,
-# «В статье 4 Федерального закона…», «Утвердить прилагаемые изменения, которые вносятся в…».
 HEADER_LINE = re.compile(r"^(?:\d+\.\s*)?(?:внести в|в [^\n\"«]{0,300}(?:закон|кодекс|постановлени|приказ)|"
                          r"утвердить прилагаемые изменения|изменения, которые вносятся)")
 QUOTED_ACT = re.compile(r"№\s?[\w\-/]+\s*[\"«]([^\"«»\n]{8,400}?)[\"»]")
@@ -320,29 +281,24 @@ LAW_ARTICLE = re.compile(r"^статья \d+(?:\s*\d+)?\.?$", re.M)
 
 @dataclass
 class TextFacts:
-    amended: list[str] = field(default_factory=list)   # названия изменяемых актов
+    amended: list[str] = field(default_factory=list)
     topics: set[str] = field(default_factory=set)
 
 
 def text_facts(text: str) -> TextFacts:
-    """Что меняет акт — по строкам «Внести в …» и статьям НК/КоАП в соответствующих разделах закона."""
     facts = TextFacts()
     lines = [(norm(raw), " ".join(raw.split())) for raw in text.splitlines()]
     for line, original in lines:
         if not HEADER_LINE.match(line):
             continue
-        # тема — только по названиям актов: по кодексу до первой кавычки и по закону в кавычках;
-        # остаток строки — сами поправки, в них может быть что угодно
         facts.topics |= topics_in(re.split(r"[\"«]", line)[0])
-        for name in QUOTED_ACT.findall(original):  # из исходной строки — с заглавными буквами
+        for name in QUOTED_ACT.findall(original):
             facts.topics |= topics_in(name)
             if name not in facts.amended and not NOT_BUSINESS.search(norm(name)):
                 facts.amended.append(name)
     t = "\n".join(line for line, _ in lines)
-    # статьи закона: «Статья 1 / Внести в часть вторую Налогового кодекса…» — дальше статьи НК
     parts = LAW_ARTICLE.split(t)
     for part in parts[1:] if len(parts) > 1 else parts:
-        # кодекс — сам изменяемый акт, а не слова в названии другого закона («…части второй НК»)
         head = re.split(r"[\"«]", part.strip()[:400])[0]
         if not re.match(r"(?:внести|в )", head):
             continue
@@ -362,7 +318,6 @@ AFTER = re.compile(r"по истечении (\d+|" + "|".join(WORD_NUM) + r") (
 
 
 def effective_dates(text: str, published: date) -> list[date]:
-    """Даты вступления в силу из фраз «Настоящий … вступает в силу …» (первая — основная)."""
     out: list[date] = []
     for phrase in IN_FORCE.findall(norm(text)):
         found = [date(int(y), MONTHS[m], int(d)) for d, m, y in EXACT.findall(phrase)]
@@ -370,13 +325,11 @@ def effective_dates(text: str, published: date) -> list[date]:
             found.append(published)
         for n, unit in AFTER.findall(phrase):
             n = int(n) if n.isdigit() else WORD_NUM[n]
-            # «по истечении N дней после дня опубликования» — действует с (N+1)-го дня
             found.append(published + timedelta(days=n + 1) if unit.startswith("дн") else add_months(published, n) + timedelta(days=1))
         out += [d for d in found if d not in out]
     return out
 
 
-# ---------------------------------------------------------------- регион (для законов субъектов)
 _SKIP_WORDS = {"республика", "область", "край", "автономный", "автономная", "округ", "народная", "—", "-"}
 _REGION_OVERRIDES = {"11": r"\bкоми\b", "12": r"\bмарий эл\b", "14": r"\bсаха\b", "17": r"\bтыв[аы]\b",
                      "77": r"\bмоскв[аы]\b", "83": r"(?<!ямало-)\bненецк", "91": r"\bкрым\b"}
@@ -395,20 +348,18 @@ REGION_PATTERNS = sorted(((code, re.compile(_region_pattern(code, name))) for co
 
 
 def region_of(header: str) -> str | None:
-    """«Закон Амурской области от 07.09.2026 № 816-ОЗ» → «28». Смотрим только на орган до « от »."""
     authority = norm(header).split(" от ")[0]
     return next((code for code, rx in REGION_PATTERNS if rx.search(authority)), None)
 
 
-# ---------------------------------------------------------------- акт целиком
 @dataclass
 class Law:
     eo_number: str
-    header: str                      # «Федеральный закон от 04.08.2026 № 293-ФЗ»
-    name: str                        # «О внесении изменений в статьи 166 и 168…»
+    header: str
+    name: str
     published: date
     topics: list[str]
-    region: str | None = None        # только для законов субъектов
+    region: str | None = None
     amended: list[str] = field(default_factory=list)
     effective: list[date] = field(default_factory=list)
     pages: int | None = None
@@ -416,16 +367,12 @@ class Law:
 
 
 def split_meta(meta: dict) -> tuple[str, str]:
-    """complexName «Федеральный закон от … № …\\n "Название"» → (реквизиты, название без кавычек)."""
     header, _, rest = (meta.get("complexName") or "").partition("\n")
     name = " ".join((meta.get("name") or rest).split()).strip().strip('"«»').strip()
     return " ".join(header.split()), name
 
 
 def classify(meta: dict, resolved: list[str], text: str | None) -> Law | None:
-    """Метаданные акта с портала + названия актов, найденных по номеру (resolved), + текст (если есть)
-    → Law. topics пустой — акт не про бизнес. None — «О внесении изменений…» без понятной темы,
-    а текста ещё нет: ждём его (worker повторит завтра)."""
     header, name = split_meta(meta)
     published = datetime.fromisoformat(meta["publishDateShort"]).date()
     law = Law(meta["eoNumber"], header, name, published, [], pages=meta.get("pagesCount"),
@@ -446,13 +393,12 @@ def classify(meta: dict, resolved: list[str], text: str | None) -> Law | None:
     law.topics = [t.code for t in TOPICS if t.code in topics]
     if meta.get("block") == "subjects":
         law.region = region_of(header)
-        if law.region is None:  # не поняли, чей закон, — не рассылаем всем регионам
+        if law.region is None:
             law.topics = []
     return law
 
 
 def drafts(law: Law, p: Profile, today: date) -> list[Draft]:
-    """Акт × профиль компании → событие «вышел акт» или вопрос о признаке, от которого зависит ответ."""
     if not law.topics or (law.region and law.region != (p.region_code or "").zfill(2)):
         return []
     reasons, actions, touched, unknown = [], [], [], []
@@ -483,6 +429,5 @@ def drafts(law: Law, p: Profile, today: date) -> list[Draft]:
         "basis_url": f"http://publication.pravo.gov.ru/document/{law.eo_number}",
         "pages": law.pages, "pdf_size": law.pdf_size,
     }
-    # срок задачи — вступление в силу: до него бот напоминает, как о любом сроке
     return [Draft("law.upcoming", f"law:{law.eo_number}:{p.inn}", payload,
                   due=effective if effective and effective > today else None)]

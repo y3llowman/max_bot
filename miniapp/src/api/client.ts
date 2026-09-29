@@ -1,9 +1,3 @@
-// Клиент API. С пустым VITE_API_URL работает на моках (src/api/mock.ts),
-// иначе ходит в бэкенд. Авторизация — по схеме бэкенда: initData из MAX Bridge
-// один раз меняется на JWT (POST /user/auth, подпись initData проверяет сервер),
-// дальше запросы идут с заголовком Authorization: Bearer <токен>.
-// Токен держим только в памяти: при каждом запуске MAX отдаёт свежий initData,
-// так что хранить токен между запусками незачем. Контракт эндпоинтов — в README.
 import { config, isMock } from "../utils/config";
 import { load, save } from "../utils/storage";
 import { initData } from "../max/bridge";
@@ -30,7 +24,6 @@ async function send(method: string, path: string, body?: unknown, bearer?: strin
   }
 }
 
-/** initData → JWT. Параллельные запросы при запуске ждут одну авторизацию, а не запускают свою. */
 function authenticate(): Promise<string> {
   pendingAuth ??= (async () => {
     const data = initData();
@@ -50,9 +43,6 @@ function authenticate(): Promise<string> {
 async function request<T>(method: string, path: string, body?: unknown, retry = true): Promise<T> {
   const used = token ?? (await authenticate());
   const res = await send(method, path, body, used);
-  // Токен отозван или сервер перезапущен с другим ключом — входим заново, один раз.
-  // Сбрасываем только тот токен, с которым ушёл запрос: если параллельный запрос
-  // уже получил новый, повторный вход не нужен.
   if (res.status === 401 && retry) {
     if (token === used) token = null;
     return request<T>(method, path, body, false);
@@ -94,10 +84,8 @@ const impl: Api = isMock ? mockApi : httpApi;
 
 const CACHE_KEY = "dashboard-cache";
 
-/** Последний успешный дашборд — для «Показать сохранённые», когда ФНС не отвечает. */
 export function cachedDashboard(): DashboardData | null {
   const cached = load<DashboardData>(CACHE_KEY);
-  // в демо ?state=error сохранённой версии ещё нет — подкладываем её, чтобы показать S3 целиком
   if (!cached && isMock && config.forcedState === "error") return seedMockCache();
   return cached;
 }

@@ -6,7 +6,6 @@ import "./styles/tokens.css";
 import "./styles/typography.css";
 import "./styles/base.css";
 
-// Тема выставляется до первого рендера, чтобы не мигнуть светлой.
 initTheme();
 
 createRoot(document.getElementById("root")!).render(

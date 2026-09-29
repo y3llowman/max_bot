@@ -1,18 +1,3 @@
-"""Единый реестр контрольных (надзорных) мероприятий (proverki.gov.ru) — проверки по ИНН.
-
-Поиск на портале закрыт капчей, но открытые данные отдаются без неё. Эндпоинты взяты
-из JS портала и проверены вживую 27.09.2026:
-
-    GET https://proverki.gov.ru/public/api/opendata/<год>/<месяц>?isFederalLaw248=true
-        → JSON-паспорт набора, в нём dataZipUrl — архив с одним XML
-          (мероприятия с датой начала в этом месяце; обновляется ежедневно,
-          ~3,5 МБ zip / 35 МБ XML / ~5 тыс. мероприятий на месяц).
-        Нет набора за месяц — 500 «files not found».
-
-XML: <INSPECTION CLASSIFICATION="КНМ|ПМ" STATUS_KEY=… ERPID=… START_DATE=… STOP_DATE=…>
-с дочерними KIND_CONTROL, KIND_KNM, KNO_ORGANIZATION (@VALUE), SUBJECT (@INN)
-и WARNING_INFO/CAPTION у предостережений. У физлиц ИНН замаскирован звёздочками.
-"""
 from __future__ import annotations
 
 import io
@@ -30,18 +15,18 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 
 @dataclass
 class Knm:
-    erpid: str             # учётный номер мероприятия в ЕРКНМ
+    erpid: str
     inn: str
-    classification: str    # «КНМ» — контрольное мероприятие, «ПМ» — профилактическое
-    status: str            # «Ожидает проведения», «Предостережение объявлено», «Отменено»…
-    status_key: str        # TYPE_WAITING_CARRY_OUT, REMARK…
-    kind: str | None       # «Выездная проверка», «Профилактический визит»…
-    control: str | None    # вид контроля: «Федеральный государственный пожарный надзор»…
-    authority: str | None  # контрольный орган
-    type_name: str | None  # «Плановое КНМ» / «Внеплановое КНМ»; у ПМ нет
-    start: str | None      # YYYY-MM-DD
+    classification: str
+    status: str
+    status_key: str
+    kind: str | None
+    control: str | None
+    authority: str | None
+    type_name: str | None
+    start: str | None
     stop: str | None
-    warning: str | None    # текст предостережения
+    warning: str | None
 
 
 def month_zip_url(year: int, month: int) -> str | None:
@@ -58,7 +43,6 @@ def _value(el: ET.Element, tag: str) -> str | None:
 
 
 def parse(xml_stream, inns: set[str]) -> list[Knm]:
-    """Мероприятия по нужным ИНН. iterparse с очисткой элементов — XML на десятки мегабайт."""
     found = []
     for _, el in ET.iterparse(xml_stream, events=("end",)):
         if el.tag.rsplit("}", 1)[-1] != "INSPECTION":
@@ -91,7 +75,6 @@ def fetch_month(year: int, month: int, inns: set[str]) -> list[Knm]:
 
 
 def months_around(today: date) -> list[tuple[int, int]]:
-    """Прошлый месяц (предостережения и недавние мероприятия), текущий и два следующих."""
     index = today.year * 12 + today.month - 1
     return [((i // 12), i % 12 + 1) for i in range(index - 1, index + 3)]
 

@@ -12,7 +12,6 @@ import { useAsync } from "../utils/useAsync";
 
 const ICON: Record<FeedItem["severity"], string> = { critical: "🔴", warning: "🟠", info: "🔵" };
 
-/** Справа: чем всё кончилось — «выполнено», «не актуально», «в списке дел» или срок. */
 function outcome(item: FeedItem): string {
   if (item.status === "done") return "выполнено";
   if (item.status === "muted") return "не актуально";
@@ -24,12 +23,10 @@ function outcome(item: FeedItem): string {
   return item.listed ? "в списке дел" : "";
 }
 
-/** Лента (колокольчик): всё, о чём бот писал в чат. Пуши в чате удаляются после ответа — история здесь. */
 export function Feed() {
   const { data, error, loading, reload } = useAsync(() => api.feed(), []);
   const navigate = useNavigate();
 
-  // лента открыта — точка «есть новые» на колокольчике гаснет
   useEffect(() => {
     api.markNotificationsSeen().catch(() => undefined);
   }, []);

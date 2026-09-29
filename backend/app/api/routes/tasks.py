@@ -21,7 +21,6 @@ router = APIRouter(tags=["tasks"])
 
 
 def company_tasks(inn: str) -> Select:
-    """Задачи — события со сроком и взятые «В список дел»; отмеченные «Не актуально» (muted) не показываем."""
     return (
         select(RadarEvent)
         .where(RadarEvent.inn == inn, or_(RadarEvent.due.is_not(None), RadarEvent.in_list), RadarEvent.status != "muted")
@@ -37,7 +36,6 @@ def task_status(event: RadarEvent, today: date) -> str:
     days_left = (event.due - today).days
     if days_left < 0:
         return "overdue"
-    # «скоро» — срок ближе первого напоминания из каталога радара (для сроков — 3 дня)
     event_type = CATALOG.get(event.type)
     first_reminder = max(event_type.remind_before, default=0) if event_type else 0
     return "soon" if days_left <= first_reminder else "planned"
@@ -53,13 +51,11 @@ def to_task(event: RadarEvent, today: date) -> Task:
         status=task_status(event, today),
         due=event.due,
         periodicity=event.payload.get("periodicity"),
+        listed=event.in_list,
     )
 
 
 def to_sections(payload: dict) -> list[TaskSection]:
-    """Разделы экрана задачи из payload: обязанности (radar/obligations.py) дают what, how, where, format,
-    basis, penalty, why; новые законы (radar/laws.drafts) — summary, actions, reasons, act, basis_url.
-    id разделов — как в макете: why и risks фронт раскрывает сразу."""
     def lines(*keys: str) -> list[str] | None:
         value = next((payload[key] for key in keys if payload.get(key)), None)
         if value is None:
@@ -90,7 +86,6 @@ def to_sections(payload: dict) -> list[TaskSection]:
     return [section for section in sections if section.body or section.steps]
 
 
-# заголовок раздела полного сообщения → (id, иконка, подпись); why и risks фронт раскрывает сразу
 TEMPLATE_SECTIONS = {
     "Что произошло": ("why", "info", "Факт из реестра"),
     "Что вышло": ("why", "info", "Акт и даты"),
@@ -103,8 +98,6 @@ TEMPLATE_SECTIONS = {
 
 
 def template_sections(event: RadarEvent, company: dict, today: date) -> list[TaskSection]:
-    """События реестров: разделы — из полного шаблона сообщения (radar/templates.py). В чат уходит
-    короткий пуш, а весь текст с «что это значит» и «что сделать» — здесь."""
     text = render(event.type, build_context(event.type, event.payload, company, today, src=event.source))
     sections: list[TaskSection] = []
     title, body = "Что произошло", []
@@ -114,7 +107,7 @@ def template_sections(event: RadarEvent, company: dict, today: date) -> list[Tas
             section_id, icon, caption = TEMPLATE_SECTIONS.get(title, (f"s{len(sections)}", "info", ""))
             sections.append(TaskSection(id=section_id, icon=icon, title=title, caption=caption, body=list(body)))
 
-    for line in text.splitlines()[2:]:  # шапка — заголовок и компания — уже есть на экране
+    for line in text.splitlines()[2:]:
         heading = re.fullmatch(r"<b>(.+)</b>", line.strip())
         if heading:
             flush()
@@ -128,14 +121,12 @@ def template_sections(event: RadarEvent, company: dict, today: date) -> list[Tas
 
 
 def heading(title: str, period: str | None) -> str:
-    """«Декларация по УСН» + «За 2025 год» → «Декларация по УСН за 2025 год»."""
     if not period:
         return title
     return f"{title} з{period[1:]}" if period.startswith("За ") else f"{title}. {period}"
 
 
 async def find_event(db: AsyncSession, business: Business, task_id: int) -> RadarEvent:
-    """Любое событие компании: и задача, и то, о чём бот прислал пуш («Открыть» ведёт сюда)."""
     event = await db.scalar(select(RadarEvent).where(RadarEvent.inn == business.inn, RadarEvent.id == task_id))
     if event is None:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -152,7 +143,6 @@ async def dashboard(
     tasks = [to_task(event, today) for event in (await db.execute(company_tasks(business.inn))).scalars()]
     open_tasks = [task for task in tasks if task.status != "done"]
     week_end = today + timedelta(days=7)
-    # точка на колокольчике: бот что-то прислал в чат после последнего открытия ленты
     sent = select(Notification.id).where(Notification.user_id == user.id, Notification.status == "sent")
     if user.notifications_seen_at is not None:
         sent = sent.where(Notification.sent_at > user.notifications_seen_at)
@@ -163,7 +153,6 @@ async def dashboard(
             soon=sum(task.status == "soon" for task in tasks),
             done=sum(task.status == "done" for task in tasks),
         ),
-        # группировку «Сегодня» / «На неделе» / «Без срока» делает фронт
         tasks=open_tasks,
         next_due=next((task.due for task in open_tasks if task.due and task.due > week_end), None),
         unread=unread,
@@ -188,8 +177,6 @@ async def feed(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Лента: о чём бот писал в чат за 90 дней, свежее сверху. Пуши в чате удаляются после ответа —
-    история остаётся здесь."""
     since = datetime.now(timezone.utc) - timedelta(days=90)
     last_sent = func.max(Notification.sent_at)
     rows = await db.execute(
@@ -224,7 +211,6 @@ async def task_details(
     else:
         company = company_ctx(None, {"name": business.name, "ogrn": business.ogrn}, business.inn)
         sections = template_sections(event, company, today)
-    # следующий открытый срок — карточка на экране выполненной задачи
     next_event = None
     if event.due is not None:
         next_event = await db.scalar(
@@ -237,7 +223,6 @@ async def task_details(
         heading=heading(task.title, event.payload.get("period")),
         sections=sections,
         document=bool(event.payload.get("document")),
-        listed=event.in_list,
         next=to_task(next_event, today) if next_event else None,
     )
 
@@ -252,7 +237,7 @@ async def mark_submitted(
     event = await find_event(db, business, task_id)
     event.status = "done"
     await db.commit()
-    await handled_in_app(user.max_user_id, event.id)  # пуш о закрытой задаче уходит из чата
+    await handled_in_app(user.max_user_id, event.id)
 
 
 @router.delete("/tasks/{task_id}/submitted", status_code=204)
@@ -273,7 +258,6 @@ async def add_to_list(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """«В список дел» на экране события — как одноимённая кнопка в чате."""
     event = await find_event(db, business, task_id)
     event.in_list = True
     await db.commit()
@@ -287,11 +271,10 @@ async def prepare_document(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Черновик документа к сроку — бот присылает его файлом в чат."""
     event = await find_event(db, business, task_id)
     if not event.payload.get("document"):
         raise HTTPException(status_code=404, detail="No document for this task")
     try:
         await send_document(db, event, user.max_user_id)
-    except Exception as exc:  # MAX не принял сообщение: пользователь не запускал бота, сбой сети
+    except Exception as exc:
         raise HTTPException(status_code=502, detail="Could not send the document to MAX chat") from exc

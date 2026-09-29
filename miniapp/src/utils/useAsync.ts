@@ -8,7 +8,6 @@ export interface AsyncState<T> {
   setData: (next: T) => void;
 }
 
-/** Загрузка данных экрана: состояние загрузки, ошибка и повтор. */
 export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]): AsyncState<T> {
   const [data, setData] = useState<T>();
   const [error, setError] = useState<unknown>();

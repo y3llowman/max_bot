@@ -4,7 +4,6 @@ import { useSession } from "../session";
 import { Icon } from "./Icon";
 import s from "./ContextBar.module.css";
 
-/** Context Bar — компания, лента (колокольчик) и «В чат MAX». По киту: только на экранах верхнего уровня. */
 export function ContextBar({ unread = false }: { unread?: boolean }) {
   const navigate = useNavigate();
   const { company } = useSession();

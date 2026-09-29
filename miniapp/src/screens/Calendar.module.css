@@ -1,5 +1,3 @@
-/* Группа задач в «Списке»: заголовок и карточки через 12. */
-
 .group {
   display: flex;
   flex-direction: column;

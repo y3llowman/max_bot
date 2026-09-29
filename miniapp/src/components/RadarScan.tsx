@@ -4,12 +4,10 @@ import s from "./RadarScan.module.css";
 
 interface Props {
   scanning: boolean;
-  /** Когда реестр МСП перечитывали последний раз, ISO. */
   checkedAt?: string;
   onScan: () => void;
 }
 
-/** Радар на дашборде: когда проверяли реестры и «Просканировать сейчас». Пока идёт проверка — луч крутится. */
 export function RadarScan({ scanning, checkedAt, onScan }: Props) {
   return (
     <div className={s.card}>

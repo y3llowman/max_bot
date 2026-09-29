@@ -1,4 +1,3 @@
-"""Профиль компании (то, чего нет в реестрах) и справочник налоговых режимов."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -12,9 +11,6 @@ REGIME_RU = {
     "psn": "патент (ПСН)",
 }
 
-# Численность берём из реестра МСП (businesses.employees_num, точное число), если её там нет —
-# спрашиваем диапазоном и храним нижнюю границу (business_profiles.headcount).
-# Границы — пороги обязанностей: есть ли сотрудники, квота для инвалидов (больше 35).
 HEADCOUNT_RU = {
     0: "нет сотрудников",
     1: "1–15 человек",
@@ -27,7 +23,6 @@ HEADCOUNT_RU = {
 
 @dataclass(frozen=True)
 class HeadcountBenefit:
-    """Льгота, которая доступна, пока численность не больше limit (пороги — НК РФ и № 17-ФЗ)."""
     code: str
     limit: int
     title: str
@@ -36,7 +31,6 @@ class HeadcountBenefit:
     ip_only: bool = False
 
 
-# Законы считают численность по-разному — это сказано в title. Сверено 27.09.2026.
 HEADCOUNT_BENEFITS = (
     HeadcountBenefit("ausn", 5, "Можно применять АУСН: средняя численность работников не больше 5",
                      "ст. 3 и ч. 6 ст. 4 Закона от 25.02.2022 № 17-ФЗ",
@@ -63,7 +57,6 @@ HEADCOUNT_BENEFITS = (
 
 CATEGORY_RU = {1: "Микропредприятие", 2: "Малое предприятие", 3: "Среднее предприятие"}
 
-# Коды регионов ФНС (businesses.region_code из реестра МСП)
 REGIONS = {
     "01": "Республика Адыгея", "02": "Республика Башкортостан", "03": "Республика Бурятия",
     "04": "Республика Алтай", "05": "Республика Дагестан", "06": "Республика Ингушетия",
@@ -100,7 +93,6 @@ REGIONS = {
 
 
 def headcount_ru(p: Profile) -> str | None:
-    """«12 человек (ФНС)» из реестра или «16–25 человек» из ответа."""
     if p.headcount is None:
         return None
     if not p.headcount_exact:
@@ -125,20 +117,18 @@ class Profile:
     msp_category: int | None = None
     tax_regime: str | None = None
     has_employees: bool | None = None
-    headcount: int | None = None     # точное число из реестра или нижняя граница диапазона из HEADCOUNT_RU
-    headcount_exact: bool = False    # True — среднесписочная из реестра МСП
-    has_licenses: bool = False       # признак лицензий из реестра МСП
-    patent_from: date | None = None  # срок патента (ПСН) — из профиля в мини-приложении
+    headcount: int | None = None
+    headcount_exact: bool = False
+    has_licenses: bool = False
+    patent_from: date | None = None
     patent_to: date | None = None
-    flags: dict[str, bool] = field(default_factory=dict)   # ответы «да/нет» на вопросы radar.laws.FLAGS
+    flags: dict[str, bool] = field(default_factory=dict)
 
     def headcount_benefits(self) -> list[HeadcountBenefit]:
-        """Льготы, которым численность точно не мешает. Для диапазона сравниваем его верхнюю границу:
-        при «1–15 человек» порог АУСН (5) неизвестен и не попадёт."""
         if self.headcount is None:
             return []
         upper = self.headcount if self.headcount_exact else next(
             (b - 1 for b in sorted(HEADCOUNT_RU) if b > self.headcount), None)
-        if upper is None:  # «больше 100 человек» — верхней границы нет
+        if upper is None:
             return []
         return [b for b in HEADCOUNT_BENEFITS if upper <= b.limit and not (b.ip_only and self.is_legal_entity)]

@@ -1,5 +1,3 @@
-// Высота нижней панели (таббар или панель действий) → CSS-переменная --dock.
-// По ней тост встаёт на 16px выше панели, как в макете E5.
 import { useEffect, useRef } from "react";
 
 export function useDockHeight<T extends HTMLElement>() {

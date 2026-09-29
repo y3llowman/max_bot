@@ -1,7 +1,3 @@
-// Проверка ИНН: длина (10 — организация, 12 — ИП) и контрольные цифры.
-// Контрольные цифры ловят опечатку до запроса в ФНС — иначе пользователь
-// ждал бы ответа реестра, чтобы узнать, что перепутал цифру.
-
 export type InnCheck =
   | { ok: true; kind: "org" | "ip" }
   | { ok: false; reason: "empty" | "length" | "checksum"; length: number };
@@ -37,8 +33,6 @@ export function innError(check: InnCheck): string | null {
   return "Похоже, в ИНН опечатка — проверьте цифры";
 }
 
-/** ИНН из QR-кода счёта или письма налоговой: поле PayeeINN, иначе первая
- *  отдельно стоящая группа из 10 или 12 цифр. */
 export function innFromQr(text: string): string | null {
   const payee = /PayeeINN=(\d{10}|\d{12})(?!\d)/i.exec(text);
   if (payee) return payee[1];

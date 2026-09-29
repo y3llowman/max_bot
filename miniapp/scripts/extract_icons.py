@@ -1,18 +1,3 @@
-"""Извлекает иконки из UI-кита дизайнера в src/components/icons.ts.
-
-Запуск из папки miniapp:  python scripts/extract_icons.py [путь к UI Kit v2.svg]
-
-Иконки в ките — раздел «Иконки», сетка `Grid`: линейные, 24×24, обводка 1.6,
-скруглённые концы, цвет через currentColor. Экспорт Фигмы кладёт контуры в
-абсолютных координатах доски без рамки 24×24. Каждая иконка в ките лежит на
-квадратной подложке 48×48 — её центр и есть центр ячейки; подложку в вывод не
-берём. Для иконок без подложки центр восстанавливается по сетке: центры рамок
-группируются в строки и столбцы, медиана даёт центр ячейки. Затем все
-координаты контуров переводятся в локальные 24×24.
-
-SVG нужно выгружать из Фигмы с выключенным «Outline text» и включённым
-«Include "id" attribute» — иначе имена слоёв пропадут.
-"""
 import os
 import re
 import statistics
@@ -25,12 +10,11 @@ KIT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "..", "..", "desi
 OUT = os.path.join(HERE, "..", "src", "components", "icons.ts")
 
 TOKEN = re.compile(r"[A-Za-z]|-?(?:\d+\.?\d*|\.\d+)(?:e-?\d+)?")
-SKIP = [None]  # подложка текущей иконки, которую не выводим
+SKIP = [None]
 PARAMS = {"M": 2, "L": 2, "T": 2, "H": 1, "V": 1, "C": 6, "S": 4, "Q": 4, "A": 7, "Z": 0}
 
 
 def fix(s):
-    """Фигма пишет UTF-8 байты имён слоёв отдельными сущностями — склеиваем."""
     if not s:
         return ""
     try:
@@ -45,7 +29,6 @@ def fmt(v):
 
 
 def walk_path(d, fn):
-    """Проходит по командам контура. fn(cmd, index_in_params, value) -> value."""
     out, toks, i, cmd = [], TOKEN.findall(d), 0, None
     while i < len(toks):
         if toks[i].isalpha():
@@ -81,8 +64,6 @@ def is_coord(cmd, k):
 
 
 def tile(el):
-    """Подложка ячейки в ките — квадрат ≥40px вокруг иконки. Не часть иконки,
-    но её центр — точный центр ячейки 24×24."""
     for r in el.iter(NS + "rect"):
         w, h = r.get("width"), r.get("height")
         if w and h and float(w) == float(h) and float(w) >= 40:
@@ -123,7 +104,6 @@ def bbox(el):
 
 
 def cluster(values, tol=14):
-    """Группирует близкие значения; возвращает функцию значение → центр группы."""
     groups = []
     for v in sorted(values):
         if groups and v - groups[-1][-1] <= tol:
@@ -169,7 +149,6 @@ def serialize(el, ox, oy):
             attrs[a] = fmt(float(el.get(a)) - o)
     else:
         return "".join(serialize(c, ox, oy) for c in el)
-    # толщину и скругление задаёт <svg> в Icon.tsx; тут только то, что отличается
     fill = paint(el.get("fill"))
     stroke = paint(el.get("stroke"))
     if fill and fill != "none":

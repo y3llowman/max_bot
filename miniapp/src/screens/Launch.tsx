@@ -4,11 +4,7 @@ import { startParam } from "../max/bridge";
 import { useSession } from "../session";
 import { Splash } from "./Splash";
 
-/** Куда ведёт диплинк https://max.ru/<бот>?startapp=<payload>.
- *  task_<id> — экран события (кнопка «Открыть» под пушем), profile_edit — «Данные компании»
- *  (карточка «Нашли вашу компанию» и /profile), feed, calendar, notifications, profile — разделы. */
-function deepLinkTarget(): string {
-  const p = startParam();
+export function deepLinkTarget(p = startParam()): string {
   if (!p) return "/tasks";
   const task = /^task_([A-Za-z0-9_-]+)$/.exec(p);
   if (task) return `/task/${task[1]}`;

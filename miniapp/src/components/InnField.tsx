@@ -13,7 +13,6 @@ interface Props {
   disabled?: boolean;
 }
 
-/** Поле ИНН (Input/Default · Focus · Error · Disabled) и кнопка QR рядом. Высота 52, r12. */
 export function InnField({ value, onChange, onBlur, onSubmit, onScan, error, disabled }: Props) {
   const id = useId();
   const hintId = `${id}-hint`;

@@ -1,5 +1,3 @@
-"""Общий клиент MAX: им шлют сообщения и бот, и API (документ в чат), и планировщик.
-Мёртвый код от Telegram-шаблона удалён."""
 from maxapi import Bot
 from maxapi.enums.parse_mode import ParseMode
 from maxapi.types.attachments.attachment import ButtonsPayload
@@ -12,8 +10,6 @@ _bot_app: dict | None = None
 
 
 async def bot_app() -> dict:
-    """Поля кнопки open_app, которая открывает мини-приложение бота. MAX требует web_app —
-    публичное имя бота (без него 400 «Field 'webApp' cannot be null»); contact_id — его id."""
     global _bot_app
     if _bot_app is None:
         me = await bot.get_me()
@@ -24,7 +20,6 @@ async def bot_app() -> dict:
 
 
 async def send_html(max_user_id: int, text: str, keyboard: dict | None = None) -> str | None:
-    """Сообщение пользователю; keyboard — inline_keyboard в формате radar.render.keyboard()."""
     attachments = [ButtonsPayload.model_validate(keyboard["payload"]).pack()] if keyboard else None
     sent = await bot.send_message(user_id=max_user_id, text=text, format=ParseMode.HTML,
                                   attachments=attachments)

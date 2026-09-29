@@ -38,8 +38,6 @@ function toUpdate(form: ProfileForm): ProfileUpdate {
 
 const flagValue = (v: boolean | null | undefined) => (v === true ? "yes" : v === false ? "no" : "");
 
-/** Данные компании: всё, от чего зависят обязанности и законы. Нашли в реестрах — показываем,
- *  пользователь поправляет; «Сохранить» пересчитывает обязанности и ведёт на главную. */
 export function ProfileEdit() {
   const { data, error, loading, reload } = useAsync(() => api.profileForm(), []);
   const [draft, setDraft] = useState<ProfileUpdate | null>(null);
@@ -207,7 +205,6 @@ export function ProfileEdit() {
   );
 }
 
-/** Строка списка с полем ввода справа: ОКВЭД, даты патента. */
 function InputCell({ title, caption, error, ...input }: { title: string; caption?: string; error?: boolean } & InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className={s.cell}>

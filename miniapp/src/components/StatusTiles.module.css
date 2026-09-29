@@ -1,5 +1,3 @@
-/* Status Tile: три в ряд с шагом 8, высота 70, r16. Иконка 20 — по центру строки числа. */
-
 .tiles {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

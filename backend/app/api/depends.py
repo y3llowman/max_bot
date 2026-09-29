@@ -27,7 +27,6 @@ async def get_current_business(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Business:
-    """404 — компании нет, мини-приложение покажет экран подключения."""
     business = await current_business(db, user.id)
     if business is None:
         raise HTTPException(status_code=404, detail="Company not connected")

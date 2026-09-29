@@ -4,7 +4,6 @@ import { openLink } from "../max/bridge";
 import { Icon } from "./Icon";
 import s from "./Accordion.module.css";
 
-/** Группа аккордеонов задачи: «Что сделать», «Как отправить», «Правовое обоснование», «Риски при задержке». */
 export function Accordion({ sections, defaultOpen = [] }: { sections: TaskSection[]; defaultOpen?: string[] }) {
   const [open, setOpen] = useState<Set<string>>(() => new Set(defaultOpen));
   const baseId = useId();

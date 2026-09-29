@@ -21,7 +21,6 @@ import { useAsync } from "../utils/useAsync";
 import { useSession } from "../session";
 import s from "./Dashboard.module.css";
 
-/** 03 · Дашборд и состояния S1 (загрузка), S2 (пусто), S3 (ошибка). */
 export function Dashboard() {
   const { data, error, loading, reload } = useAsync(() => api.dashboard(), []);
   const [saved, setSaved] = useState<DashboardData | null>(null);
@@ -88,16 +87,14 @@ function DashboardContent({ data, stale, onScanned }: { data: DashboardData; sta
           ))}
         </>
       )}
-      {/* события без срока, взятые «В список дел» в чате или в приложении */}
-      {groups.undated.length > 0 && <SectionHeader title="Без срока" count={groups.undated.length} />}
-      {groups.undated.map((t) => (
+      {groups.listed.length > 0 && <SectionHeader title="Список дел" count={groups.listed.length} />}
+      {groups.listed.map((t) => (
         <TaskCard key={t.id} task={t} />
       ))}
     </>
   );
 }
 
-/** S2. «На 30 дней всё спокойно» — только когда ближайший срок дальше 30 дней. */
 function DashboardEmpty({ data, onCalendar }: { data: DashboardData; onCalendar: () => void }) {
   const next = data.nextDue ? parseISO(data.nextDue) : null;
   const calm30 = !next || diffDays(next, today()) > 30;
@@ -122,7 +119,6 @@ function DashboardEmpty({ data, onCalendar }: { data: DashboardData; onCalendar:
   );
 }
 
-/** S3. По заметке дизайнера ошибка объясняет причину и даёт выход: повтор или сохранённые данные. */
 function DashboardError({ onRetry, onShowSaved }: { onRetry: () => void; onShowSaved: (d: DashboardData) => void }) {
   const cached = cachedDashboard();
   return (
@@ -152,7 +148,6 @@ function DashboardError({ onRetry, onShowSaved }: { onRetry: () => void; onShowS
   );
 }
 
-/** S1. Загрузка повторяет раскладку экрана. */
 function DashboardSkeleton() {
   return (
     <>

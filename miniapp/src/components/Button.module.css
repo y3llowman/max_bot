@@ -1,6 +1,3 @@
-/* Кнопки из кита: L — 52, M — 48 (на экранах состояний), скругление 12.
-   Hover/Pressed — Primary Dark, Pressed — внутренняя тень, Focus — кольцо 3px, Disabled — 40%. */
-
 .button {
   display: inline-flex;
   align-items: center;
@@ -31,7 +28,6 @@
 .danger { background: var(--danger-soft); color: var(--danger-strong); }
 .danger:active { background: var(--danger-soft-hover); }
 
-/* Hover — только там, где есть мышь: на сенсорном экране :hover залипает после тапа. */
 @media (hover: hover) {
   .primary:hover { background: var(--primary-dark); }
   .secondary:hover { background: var(--primary-light-hover); }
@@ -50,7 +46,6 @@
   pointer-events: none;
 }
 
-/* Иконка-кнопка: зона нажатия 44×44 по киту, иконка без подложки. */
 .iconButton {
   display: inline-flex;
   align-items: center;
@@ -64,7 +59,6 @@
 
 .iconButton:active { background: var(--surface-2); }
 
-/* Иконка-кнопка с рамкой: QR рядом с полем ИНН, 52×52. */
 .iconButtonOutlined {
   width: 52px;
   height: 52px;

@@ -9,13 +9,10 @@ interface Props {
   icon: IconName;
   title: string;
   text: string;
-  /** Под текстом: чип «Сохранено…» или плашка «Ближайший срок…». */
   extra?: ReactNode;
   actions?: ReactNode;
 }
 
-/** Пустое состояние и ошибка (S2, S3, S5, S6): иллюстрация 119 с кольцом 88, заголовок,
- *  объяснение и выход — по заметке дизайнера у ошибки всегда есть повтор, сохранённые данные или чат. */
 export function StateView({ tone, icon, title, text, extra, actions }: Props) {
   return (
     <div className={s.state}>
@@ -32,7 +29,6 @@ export function StateView({ tone, icon, title, text, extra, actions }: Props) {
   );
 }
 
-/** Плашка «Ближайший срок — 25 августа» из S2. */
 export function NextDuePill({ children }: { children: string }) {
   return (
     <span className={`t-detail ${s.pill}`}>

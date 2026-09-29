@@ -20,8 +20,6 @@ const BENEFITS: { icon: IconName; text: string }[] = [
   { icon: "scale", text: "Простыми словами: что, зачем и чем грозит" },
 ];
 
-/** 02 · Подключение компании и E1 · Ошибка ввода ИНН.
- *  По заметке дизайнера: кнопка неактивна, пока ИНН невалиден; подсказка — отсканировать QR. */
 export function Connect() {
   const [inn, setInn] = useState("");
   const [touched, setTouched] = useState(false);
@@ -31,11 +29,9 @@ export function Connect() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const toast = useToast();
-  // флаг — в адресе, а не в history.state: так переход не зависит от того, как WebView MAX обращается с историей
   const changing = params.get("change") === "1";
 
   const check = checkInn(inn);
-  // Ошибку показываем после ухода из поля или когда введено 10+ цифр — не на каждой первой цифре.
   const error = serverError ?? (touched || inn.length >= 10 ? innError(check) : null);
 
   const submit = async () => {
@@ -53,7 +49,6 @@ export function Connect() {
       if (code === "not_found") {
         setServerError("Не нашли компанию с таким ИНН в реестре ФНС — проверьте цифры");
       } else if (code === "conflict") {
-        // одну компанию ведёт один аккаунт; в рабочей версии владельца подтвердим через Госуслуги
         setServerError("Эту компанию уже подключил другой пользователь MAX");
       } else {
         const text = code === "unavailable" ? "Реестр ФНС не отвечает — попробуйте через пару минут"

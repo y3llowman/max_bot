@@ -50,7 +50,6 @@ interface WeekProps {
   onShift: (weeks: number) => void;
 }
 
-/** Неделя (05, S6): 7 ячеек 46×68 с шагом 2; выбранный день — заливка, сегодня — обводка. */
 export function WeekStrip({ monday, today, selected, tasks, title, onSelect, onShift }: WeekProps) {
   const byDay = tasksByDay(tasks);
   return (
@@ -94,7 +93,6 @@ interface MonthProps {
   onShift: (months: number) => void;
 }
 
-/** Месяц (E2): сетка 7×N, ячейка 50×46; дни соседних месяцев приглушены. */
 export function MonthGrid({ month, today, selected, tasks, title, onSelect, onShift }: MonthProps) {
   const byDay = tasksByDay(tasks);
   const first = monthGridStart(month);
@@ -137,7 +135,6 @@ export function MonthGrid({ month, today, selected, tasks, title, onSelect, onSh
   );
 }
 
-/** Понедельник первой строки сетки месяца. */
 export function monthGridStart(month: Date): Date {
   const first = new Date(month.getFullYear(), month.getMonth(), 1);
   return addDays(first, -((first.getDay() + 6) % 7));

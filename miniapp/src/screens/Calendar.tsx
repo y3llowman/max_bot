@@ -40,8 +40,6 @@ export function CalendarScreen() {
   );
 }
 
-/** 05 · Неделя и S6 · Неделя пусто. Под неделей — сроки выбранного дня, как в «Месяце»: тап по дню
- *  переключает список. В другой неделе, пока день не выбран, — первый день со сроками. */
 function WeekView() {
   const now = today();
   const [monday, setMonday] = useState(() => startOfWeek(now));
@@ -87,7 +85,6 @@ function WeekView() {
   );
 }
 
-/** S6: пустая неделя подсказывает следующий срок и ведёт на следующую неделю. */
 function WeekEmpty({ weekEnd, onNext }: { weekEnd: string; onNext: () => void }) {
   const from = toISO(addDays(parseISO(weekEnd), 1));
   const until = toISO(addDays(parseISO(weekEnd), 120));
@@ -108,7 +105,6 @@ function WeekEmpty({ weekEnd, onNext }: { weekEnd: string; onNext: () => void })
   );
 }
 
-/** E2 · Месяц: под сеткой — сроки выбранного дня. */
 function MonthView() {
   const now = today();
   const [month, setMonth] = useState(() => startOfMonth(now));
@@ -153,7 +149,6 @@ function MonthView() {
   );
 }
 
-/** E3 · Список: открытые задачи по неделям. Просроченное — в «Этой неделе», его нужно сделать сейчас. */
 function ListView() {
   const now = today();
   const from = toISO(addDays(now, -90));

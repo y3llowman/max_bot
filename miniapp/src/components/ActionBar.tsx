@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { useDockHeight } from "../utils/dock";
 import s from "./ActionBar.module.css";
 
-/** Action Bar — нижняя панель вложенных экранов: разделитель, отступы 12/20, кнопки 52. */
 export function ActionBar({ children }: { children: ReactNode }) {
   const ref = useDockHeight<HTMLDivElement>();
   return (
@@ -12,7 +11,6 @@ export function ActionBar({ children }: { children: ReactNode }) {
   );
 }
 
-/** Кнопки в ряд поровну: «Уже подано» + «Сформировать». */
 export function ActionRow({ children }: { children: ReactNode }) {
   return <div className={s.row}>{children}</div>;
 }

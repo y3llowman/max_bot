@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: max
       POSTGRES_PASSWORD: max
     ports:
-      - "127.0.0.1:5433:5432"  # только с самого сервера: пароль в этом файле
+      - "127.0.0.1:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -15,6 +15,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   backend:
     build:
@@ -22,7 +23,7 @@ services:
       dockerfile: Dockerfile
     container_name: max_backend
     ports:
-      - "127.0.0.1:8000:8000"  # снаружи — через Caddy (HTTPS)
+      - "127.0.0.1:8000:8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://max:max@postgres:5432/maxapp
       MAX_TOKEN: ${MAX_TOKEN}
@@ -32,6 +33,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
     restart: unless-stopped
 
   bot:
@@ -43,9 +49,11 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://max:max@postgres:5432/maxapp
       MAX_TOKEN: ${MAX_TOKEN}
-      DEBUG: ${DEBUG:-true}  # true — включены демо-команды /demo_remind и /demo_event
+      DEBUG: ${DEBUG:-true}
     depends_on:
       postgres:
+        condition: service_healthy
+      backend:
         condition: service_healthy
     restart: unless-stopped
 

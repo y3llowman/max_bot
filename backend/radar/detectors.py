@@ -1,4 +1,3 @@
-"""Детекторы событий реестров: снимки ЕГРЮЛ и реестра МСП → черновики событий radar_events."""
 from __future__ import annotations
 
 import calendar
@@ -11,7 +10,6 @@ from .render import as_date, fio
 
 @dataclass
 class Draft:
-    """Черновик события до записи в БД (radar_events): что произошло и когда наступает срок."""
     type: str
     key: str
     payload: dict = field(default_factory=dict)
@@ -19,7 +17,6 @@ class Draft:
 
 
 def add_months(d: date, months: int) -> date:
-    """Прибавляет months календарных месяцев к дате, обрезая день до последнего числа месяца."""
     month_index = d.month - 1 + months
     year = d.year + month_index // 12
     month = month_index % 12 + 1
@@ -28,13 +25,11 @@ def add_months(d: date, months: int) -> date:
 
 
 def _is_foreign(director: dict | None) -> bool:
-    """True, если гражданство директора (ЕГРЮЛ) указано и это не Россия."""
     citizenship = (director or {}).get("citizenship") or ""
     return bool(citizenship) and "росси" not in citizenship.lower()
 
 
 def _person(p: dict | None) -> str | None:
-    """«Иванов Иван Иванович» из ЕГРЮЛ; для участника-организации — её наименование."""
     if not p:
         return None
     return p.get("full_name") or fio(" ".join(filter(None, (p.get("surname"), p.get("name"), p.get("patronymic"))))) or None
@@ -46,7 +41,6 @@ def _founders(extract: dict) -> str | None:
     return "; ".join(parts) or None
 
 
-# раздел выписки, где стоит отметка о недостоверности → как назвать его пользователю
 UNRELIABLE_ABOUT = {
     "Место нахождения и адрес юридического лица": "адрес",
     "Сведения о лице, имеющем право без доверенности действовать от имени юридического лица": "руководитель",
@@ -55,14 +49,10 @@ UNRELIABLE_ABOUT = {
 
 
 def egrul_conditions(inn: str, cur: dict, today: date) -> list[Draft]:
-    """Выписка ЕГРЮЛ (asdict(EgrulExtract)) → состояния, которые держатся, пока их видно в выписке:
-    отметка о недостоверности, дисквалификация руководителя, ликвидация или предстоящее исключение.
-    Исчезнувшие worker закрывает (reconcile_conditions) и сообщает об этом (resolutions)."""
     drafts = []
 
     unreliable = [n for n in cur.get("notes") or [] if "недостовер" in n["text"].lower()]
     if unreliable:
-        # п. 5 ст. 21.1 129-ФЗ: через 6 месяцев после записи о недостоверности ФНС может исключить компанию
         dates = [as_date(n["date"]) for n in unreliable if n.get("date")]
         mark = min(dates) if dates else None
         exclusion = add_months(mark, 6) if mark else None
@@ -88,8 +78,6 @@ def egrul_conditions(inn: str, cur: dict, today: date) -> list[Draft]:
         since = as_date(cur.get("status_date"))
         payload, due = {"note": status, "since": cur.get("status_date"), "objection_due": None}, None
         if "исключ" in status.lower() and since:
-            # п. 3–4 ст. 21.1 129-ФЗ: 3 месяца на заявление со дня публикации решения. Публикация идёт после
-            # записи в ЕГРЮЛ, поэтому срок от даты записи — не позже настоящего
             due = add_months(since, 3)
             payload |= {"objection_due": due.isoformat(), "title": "Возражение против исключения из ЕГРЮЛ",
                         "period": f"Решение ФНС от {since:%d.%m.%Y}", "why": "ФНС решила исключить компанию из ЕГРЮЛ",
@@ -100,7 +88,6 @@ def egrul_conditions(inn: str, cur: dict, today: date) -> list[Draft]:
     return drafts
 
 
-# что сравниваем между двумя выписками: поле события → (как назвать, как достать из выписки)
 CHANGE_FIELDS = {
     "director": ("руководитель", lambda e: _person(e.get("director"))),
     "founders": ("участники", _founders),
@@ -110,8 +97,6 @@ CHANGE_FIELDS = {
 
 
 def egrul_changes(inn: str, prev: dict | None, cur: dict, today: date) -> list[Draft]:
-    """Предыдущий и новый снимок выписки → что изменилось. Поле, которого в старом снимке нет,
-    не сравниваем: иначе доработка парсера выглядела бы как изменение в реестре."""
     if not prev:
         return []
     drafts = []
@@ -122,7 +107,6 @@ def egrul_changes(inn: str, prev: dict | None, cur: dict, today: date) -> list[D
                                 payload={"field": name, "field_title": title, "old": old, "new": new}))
     director = cur.get("director")
     if any(d.payload["field"] == "director" for d in drafts) and _is_foreign(director):
-        # п. 8 ст. 13 115-ФЗ: 3 рабочих дня с договора; ЕГРЮЛ обновляется позже, так что срок — сегодня
         name = _person(director)
         drafts.append(Draft("mvd.foreign_director", key=f"mvd.foreign_director:{inn}:{name}", due=today, payload={
             "director": {"fio": name, "citizenship": director["citizenship"]},
@@ -139,9 +123,6 @@ KNM_CANCELLED = ("Отменено", "Не может быть проведен�
 
 
 def inspection_events(inn: str, knms: list[dict], today: date) -> tuple[list[Draft], list[str]]:
-    """Мероприятия ЕРКНМ по ИНН (asdict(erknm_client.Knm)) → предстоящие проверки и профвизиты
-    (срок — дата начала) и объявленные предостережения. Второе значение — ключи отменённых
-    мероприятий: напоминать о них больше не нужно."""
     drafts, cancelled = [], []
     for k in knms:
         key = f"knm:{k['erpid']}"
@@ -166,14 +147,11 @@ def inspection_events(inn: str, knms: list[dict], today: date) -> tuple[list[Dra
 
 
 def reconcile_conditions(open_keys: dict[str, str], drafts: list[Draft]) -> list[str]:
-    """Ключи открытых состояний, которых детектор больше не видит, — их пора закрыть."""
     seen = {d.key for d in drafts}
     return [key for key in open_keys if key not in seen]
 
 
 def resolutions(closed: list, today: date) -> list[Draft]:
-    """Закрытые состояния (RadarEvent) → сообщения «снято» по catalog.ON_RESOLVE. Дисквалификация,
-    пропавшая из выписки раньше срока (сменили руководителя), не «истекла» — о ней молчим."""
     drafts = []
     for event in closed:
         resolved_type = ON_RESOLVE.get(event.type)
@@ -190,8 +168,6 @@ MSP_CONDITIONS = ("msp.not_found", "msp.excluded")
 
 
 def msp_changes(inn: str, prev: dict | None, cur: dict | None, today: date) -> list[Draft]:
-    """Снимки реестра МСП (asdict(RmspRecord), None — записи нет) → события.
-    Открытые состояния msp.not_found / msp.excluded, которых больше нет в черновиках, worker закрывает."""
     if cur is None:
         return [Draft("msp.not_found", key=f"msp.not_found:{inn}", payload={})]
     if cur.get("date_excluded"):
@@ -203,7 +179,6 @@ def msp_changes(inn: str, prev: dict | None, cur: dict | None, today: date) -> l
                "lost_micro": old == 1 and new > 1}
     due = None
     if payload["lost_micro"]:
-        # ст. 309.2 ТК РФ: 4 месяца на локальные нормативные акты после выхода из микропредприятий
         due = add_months(today, 4)
         payload |= {"lna_due": due.isoformat(), "title": "Локальные нормативные акты", "period": "После смены категории МСП",
                     "what": "Утвердите правила внутреннего трудового распорядка, положение об оплате труда и другие ЛНА.",

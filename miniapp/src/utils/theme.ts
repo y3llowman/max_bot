@@ -1,6 +1,3 @@
-// Тема. MAX Bridge тему не передаёт (в документации её нет), поэтому по умолчанию
-// следуем системной — WebView клиента наследует её. В «Профиле» можно
-// выбрать тему вручную; «Как в MAX» = системная.
 import { useSyncExternalStore } from "react";
 import { config } from "./config";
 import { load, save } from "./storage";

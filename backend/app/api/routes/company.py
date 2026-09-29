@@ -37,13 +37,11 @@ def registry_okved(business: Business) -> str:
 
 
 async def to_company(db: AsyncSession, business: Business) -> Company:
-    full_name = re.sub(r'"([^"]*)"', r"«\1»", business.name)  # ООО "МОСТАР" → ООО «МОСТАР»
+    full_name = re.sub(r'"([^"]*)"', r"«\1»", business.name)
     quoted = re.search(r"«[^»]*»", full_name)
     name = quoted.group(0) if quoted else full_name
-    # режим — из ответов, численность, ОКВЭД и регион — из реестра МСП или поправок пользователя (worker.load_profile)
     profile = await load_profile(db, business.inn)
     regime = REGIME_RU.get(profile.tax_regime)
-    # КПП — из последней выписки ЕГРЮЛ, она скачивается в фоне после подключения
     egrul = (await db.execute(
         select(RegistrySnapshot.data)
         .where(RegistrySnapshot.inn == business.inn, RegistrySnapshot.source == "egrul")
@@ -72,7 +70,7 @@ async def to_company(db: AsyncSession, business: Business) -> Company:
 async def load_from_registry(db: AsyncSession, user: User, inn: str) -> Business:
     try:
         record = await asyncio.to_thread(rmsp_client.fetch_by_inn, inn)
-    except Exception as exc:  # ФНС не ответила — 503, чтобы мини-приложение не путало это с ошибкой сервера
+    except Exception as exc:
         raise HTTPException(status_code=503, detail="SME registry is unavailable") from exc
     if record is None:
         raise HTTPException(status_code=404, detail="INN not found in the SME registry")
@@ -85,16 +83,13 @@ async def load_from_registry(db: AsyncSession, user: User, inn: str) -> Business
 
 
 async def continue_in_chat(max_user_id: int, card: str | None = None) -> None:
-    """Компанию подключили или дозаполнили в мини-приложении — бот продолжает в чате: вопрос о режиме
-    или численности, а если профиль полный — итог. card — карточка «Всё верно?» или вопрос профиля,
-    на которые ответили правкой в приложении: убираем из чата."""
-    from bot.message_handler import next_step  # логика онбординга живёт в боте; импорт не запускает polling
+    from bot.message_handler import next_step
     try:
         if card:
             await answered(max_user_id, card, release=False)
         if not await next_step(max_user_id):
             await dispatch()
-    except Exception:  # MAX не даёт писать тем, кто не запускал бота
+    except Exception:
         logger.exception("could not continue onboarding in chat for %s", max_user_id)
 
 
@@ -115,8 +110,7 @@ async def connect_company(
     db: AsyncSession = Depends(get_db),
 ):
     business = await load_from_registry(db, user, payload.inn)
-    background.add_task(continue_in_chat, user.max_user_id)  # первым: фоновые задачи идут по очереди
-    # выписка ЕГРЮЛ (КПП, адрес, директор — для документов) и выгрузки ЕРКНМ скачиваются медленно — в фоне
+    background.add_task(continue_in_chat, user.max_user_id)
     background.add_task(scan_in_background, business.inn)
     return await to_company(db, business)
 
@@ -128,10 +122,8 @@ async def refresh_company(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """«Обновить» в профиле и «Просканировать сейчас» на дашборде: реестр МСП сразу, ЕГРЮЛ и ЕРКНМ — в фоне,
-    находки придут в чат."""
     business = await load_from_registry(db, user, business.inn)
-    background.add_task(scan_in_background, business.inn)  # идёт прошлая проверка — новая не запустится
+    background.add_task(scan_in_background, business.inn)
     return await to_company(db, business)
 
 
@@ -140,7 +132,6 @@ async def profile_form(
     business: Business = Depends(get_current_business),
     db: AsyncSession = Depends(get_db),
 ):
-    """Экран «Данные компании»: всё, что влияет на список обязанностей и законов, — с тем, что в реестре."""
     profile = await load_profile(db, business.inn)
     answers = await db.get(BusinessProfile, business.inn)
     return ProfileForm(
@@ -155,7 +146,7 @@ async def profile_form(
         patent_from=profile.patent_from, patent_to=profile.patent_to,
         options=ProfileOptions(
             regimes=[Option(value=code, label=label[:1].upper() + label[1:]) for code, label in REGIME_RU.items()
-                     if not (profile.is_legal_entity and code == "psn")],  # патент — только у ИП
+                     if not (profile.is_legal_entity and code == "psn")],
             headcounts=[Option(value=str(low), label=label[:1].upper() + label[1:]) for low, label in HEADCOUNT_RU.items()],
             regions=[Option(value=code, label=name) for code, name in sorted(REGIONS.items(), key=lambda item: item[1])],
             flags=[Option(value=code, label=flag.label) for code, flag in FLAGS.items()],
@@ -175,8 +166,6 @@ async def save_profile(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Поправки пользователя: режим, численность, ОКВЭД, регион, лицензии, признаки, срок патента.
-    Совпадающее с реестром не храним — тогда обновления реестра подтягиваются сами."""
     legal_entity = business.subject_type == "UL"
     if payload.regime is not None and (payload.regime not in REGIME_RU or (legal_entity and payload.regime == "psn")):
         raise invalid("Unknown tax regime")
@@ -203,15 +192,14 @@ async def save_profile(
     answers.okved_main = okved if okved != business.main_activity_code else None
     answers.region_code = region if region != (business.region_code or "").zfill(2) else None
     answers.has_licenses = payload.has_licenses if payload.has_licenses != business.has_licenses else None
-    answers.flags = {code: value for code, value in payload.flags.items() if value is not None}  # «не знаю» — спросим
+    answers.flags = {code: value for code, value in payload.flags.items() if value is not None}
     answers.patent_from, answers.patent_to = (payload.patent_from, payload.patent_to) if patent else (None, None)
     answers.answered_at = datetime.now(timezone.utc)
     db.add(answers)
     await db.commit()
     await materialize_for(business.inn)
-    # бот ждёт ответа на свой вопрос (не пуш из очереди) — карточку «Всё верно?» или вопрос профиля
     card = user.awaiting_mid if user.awaiting_mid and not await db.scalar(
         select(Notification.id).where(Notification.max_message_id == user.awaiting_mid).limit(1)) else None
-    if card or not was_complete:  # ответили правкой в приложении — бот продолжит в чате (вопрос или итог)
+    if card or not was_complete:
         background.add_task(continue_in_chat, user.max_user_id, card)
     return await to_company(db, business)

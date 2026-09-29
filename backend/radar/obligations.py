@@ -1,13 +1,3 @@
-"""Каталог обязанностей: что сдать или заплатить, кого это касается и когда срок.
-
-Обязанность — это данные и два правила:
-  applies(p)        → None, если не касается; иначе строка — ответ на «почему я это вижу»;
-  schedule(p, year) → номинальные сроки за год с подписью периода.
-Перенос срока с выходного на рабочий день (п. 7 ст. 6.1 НК РФ) делает next_workday().
-
-Сроки и штрафы сверены с календарём бухгалтера на 2026 год. Если меняется НК, сверять заново.
-В каталог не вошли СОУТ, ЭПД и ККТ: их сроки нельзя вычислить из реестров.
-"""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -53,10 +43,9 @@ class Obligation:
     periodicity: str
     applies: Callable[[Profile], str | None]
     schedule: Schedule
-    document: str | None = None    # код черновика для «Подготовить документ» (radar/documents.py)
+    document: str | None = None
 
     def payload(self, why: str, period: str) -> dict:
-        """Поля для radar_events.payload: их читают экран задачи и шаблон deadline.group."""
         return {
             "code": self.code, "title": self.title, "period": period, "what": self.what,
             "how": list(self.how), "where": self.where, "where_url": self.where_url,
@@ -66,17 +55,13 @@ class Obligation:
         }
 
 
-# ---------------------------------------------------------------- рабочие дни
-# Праздники по ст. 112 ТК РФ. Если праздник выпал на выходной, выходной переносится на следующий
-# рабочий день, кроме январских: их переносит постановление правительства (DECREE_DAYS_OFF).
 HOLIDAYS = ((1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8),
             (2, 23), (3, 8), (5, 1), (5, 9), (6, 12), (11, 4))
 DECREE_DAYS_OFF = {
-    date(2026, 1, 9), date(2026, 12, 31),                       # постановление № 1466 от 24.09.2025
-    date(2027, 2, 22), date(2027, 11, 5), date(2027, 12, 31),   # постановление № 1187 от 17.09.2026
+    date(2026, 1, 9), date(2026, 12, 31),
+    date(2027, 2, 22), date(2027, 11, 5), date(2027, 12, 31),
 }
-# выходные, которые постановление сделало рабочими: срок, выпавший на них, не переносится
-DECREE_WORKDAYS = {date(2027, 2, 20)}                           # № 1187: суббота 20.02 → понедельник 22.02
+DECREE_WORKDAYS = {date(2027, 2, 20)}
 
 
 def is_weekend(d: date) -> bool:
@@ -103,9 +88,7 @@ def next_workday(d: date) -> date:
     return d
 
 
-# ---------------------------------------------------------------- расписания
 def monthly(day: int) -> Schedule:
-    """day-го числа каждого месяца — за прошлый месяц."""
     def schedule(p: Profile, year: int) -> list[tuple[date, str]]:
         out = []
         for month in range(1, 13):
@@ -116,8 +99,6 @@ def monthly(day: int) -> Schedule:
 
 
 def cumulative(day: int, annual: tuple[int, int], annual_label: str = "За {year} год") -> Schedule:
-    """Отчёт нарастающим итогом: за I квартал, полугодие и 9 месяцев — day-го числа месяца
-    после периода; за прошлый год — в дату annual (месяц, день)."""
     def schedule(p: Profile, year: int) -> list[tuple[date, str]]:
         return [
             (date(year, *annual), annual_label.format(year=year - 1)),
@@ -149,7 +130,7 @@ def usn_pay_schedule(p: Profile, year: int) -> list[tuple[date, str]]:
     annual = f"Налог за {year - 1} год"
     if p.is_legal_entity:
         out.append((date(year, 3, 28), annual))
-    else:  # у ИП налог за год и аванс за I квартал — в один день
+    else:
         out[0] = (date(year, 4, 28), f"{annual} и аванс за I квартал {year}")
     return out
 
@@ -167,14 +148,11 @@ def ip_ndfl_notice_schedule(p: Profile, year: int) -> list[tuple[date, str]]:
 
 
 def ip_ndfl_pay_schedule(p: Profile, year: int) -> list[tuple[date, str]]:
-    """Авансы — до 28-го числа после квартала, налог за год — до 15 июля (п. 6 и 8 ст. 227 НК РФ)."""
     out = [(date(year, month, 28), f"{label} {year}") for month, label in USN_ADVANCES]
     return out + [(date(year, 7, 15), f"Налог за {year - 1} год")]
 
 
 def patent_schedule(p: Profile, year: int) -> list[tuple[date, str]]:
-    """п. 2 ст. 346.51 НК РФ: патент до 6 месяцев — вся сумма до конца срока; от 6 месяцев — треть
-    в течение 90 дней от начала, остальное до конца срока. Кончается 31 декабря — платить до 28 декабря."""
     if not (p.patent_from and p.patent_to):
         return []
     start, end = p.patent_from, p.patent_to
@@ -191,7 +169,6 @@ def ip_contrib_schedule(p: Profile, year: int) -> list[tuple[date, str]]:
             (date(year, 12, 28), f"Фиксированные взносы за {year} год")]
 
 
-# ---------------------------------------------------------------- применимость
 def on_usn(p: Profile) -> str | None:
     if p.tax_regime in ("usn_income", "usn_ie"):
         return f"вы на {REGIME_RU[p.tax_regime]}"
@@ -199,9 +176,6 @@ def on_usn(p: Profile) -> str | None:
 
 
 def has_staff(p: Profile) -> str | None:
-    """Отчётность работодателя. На АУСН её нет: НДФЛ за сотрудников по умолчанию считает и платит банк,
-    взносы (кроме травматизма) не платятся, РСВ, 6-НДФЛ и персонифицированные сведения не сдаются
-    (закон № 17-ФЗ) — остаётся только стаж в ЕФС-1 (efs1_ausn)."""
     if not p.has_employees or p.tax_regime == "ausn":
         return None
     return "у вас есть сотрудники — вы налоговый агент и страхователь"
@@ -228,7 +202,6 @@ def legal_entity(p: Profile) -> str | None:
 
 
 def osno(p: Profile) -> str | None:
-    """НДС платят и организации, и ИП на ОСНО (ст. 143 НК РФ)."""
     return "вы на ОСНО и платите НДС" if p.tax_regime == "osno" else None
 
 
@@ -248,7 +221,7 @@ def ip_not_ausn(p: Profile) -> str | None:
 
 def monthly_payments(p: Profile) -> str | None:
     if p.tax_regime == "ausn":
-        return None  # налог АУСН — отдельной обязанностью ausn_pay, НДФЛ сотрудников платит банк
+        return None
     if p.has_employees:
         return "у вас есть сотрудники: НДФЛ и взносы платят каждый месяц"
     if p.tax_regime == "osno":
@@ -262,7 +235,6 @@ def quota(p: Profile) -> str | None:
     return None
 
 
-# ---------------------------------------------------------------- каталог
 OBLIGATIONS: tuple[Obligation, ...] = (
     Obligation(
         code="usn_decl", title="Декларация по УСН",
@@ -513,7 +485,6 @@ BY_CODE = {o.code: o for o in OBLIGATIONS}
 
 
 def due_dates(o: Obligation, p: Profile, start: date, end: date) -> list[tuple[date, date, str]]:
-    """Сроки обязанности в окне [start, end]: (срок с переносом, номинальный срок, период)."""
     out = []
     for year in range(start.year, end.year + 1):
         for nominal, period in o.schedule(p, year):

@@ -5,8 +5,6 @@ import { StateView } from "../components/StateView";
 import { openChat } from "../max/bridge";
 import s from "./Splash.module.css";
 
-/** 01 · Старт: пока проверяем данные компании. Тот же экран — при подключении по ИНН.
- *  error: network — бэкенд недоступен; unauthorized — открыто не из MAX, узнать пользователя нечем. */
 export function Splash({ error, onRetry }: { error?: "network" | "unauthorized"; onRetry?: () => void }) {
   if (error === "unauthorized") {
     return (

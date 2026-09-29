@@ -6,11 +6,6 @@
     <meta name="color-scheme" content="light dark" />
     <title>Хакатон MAX 267</title>
     <script>
-      // Клиент MAX внедряет в страницу скрипт, который оборачивает Object.getOwnPropertyDescriptor.
-      // Внедрённый повторно (после переходов внутри приложения), он оборачивает собственную обёртку —
-      // и та вызывает сама себя: «Maximum call stack size exceeded», как только React создаёт <input>
-      // («Сменить компанию»). Закрепляем штатное поведение через Reflect; попытка заменить функцию
-      // молча игнорируется, чтобы скрипт MAX не упал.
       (function () {
         var reflect = Reflect.getOwnPropertyDescriptor;
         function getOwnPropertyDescriptor(o, p) {
@@ -24,8 +19,6 @@
         });
       })();
     </script>
-    <!-- MAX Bridge: создаёт window.WebApp. Вне клиента MAX скрипт просто не найдёт хост,
-         а src/max/bridge.ts отработает на заглушках. -->
     <script src="https://st.max.ru/js/max-web-app.js"></script>
   </head>
   <body>

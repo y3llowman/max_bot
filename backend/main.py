@@ -7,7 +7,6 @@ from app.api.routes.main import api_router
 from core.config import DEBUG, FRONTEND_DIR, HOST, PORT
 from databases import init_db
 
-# /docs и /openapi.json — только при DEBUG: описание API наружу не отдаём
 app = FastAPI(title="MAX Mini App API", debug=DEBUG, docs_url="/docs" if DEBUG else None,
               redoc_url="/redoc" if DEBUG else None, openapi_url="/openapi.json" if DEBUG else None)
 app.include_router(api_router)

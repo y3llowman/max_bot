@@ -70,15 +70,13 @@
   flex: none;
 }
 
-/* Нативный select растянут на всю строку и прозрачен: системный выбор на телефоне,
-   а выглядит как строка из макета. */
 .select {
   position: absolute;
   inset: 0;
   width: 100%;
   opacity: 0;
   cursor: pointer;
-  font-size: 16px; /* меньше 16 — iOS зумит страницу при фокусе */
+  font-size: 16px;
 }
 
 .cell:has(.select:focus-visible) {

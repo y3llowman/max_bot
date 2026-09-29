@@ -1,9 +1,3 @@
-"""Заполнение шаблонов и сборка тела POST /messages для MAX.
-
-Почему format="html", а не markdown: данные из реестров содержат `_`, `*`, кавычки
-(MOSTAR.7@YANDEX.RU, ООО "…"). Jinja autoescape экранирует их для HTML автоматически,
-а для markdown пришлось бы писать своё экранирование.
-"""
 from __future__ import annotations
 
 import re
@@ -28,8 +22,6 @@ def plural(n: int, one: str, few: str, many: str) -> str:
 
 
 def as_date(d: date | str | None) -> date | None:
-    """Даты в radar_events.payload лежат строками (JSONB): ISO или «ДД.ММ.ГГГГ» из реестров
-    (реестр МСП добавляет время: «10.07.2017 00:00:00» — отбрасываем его)."""
     if not isinstance(d, str):
         return d
     return datetime.strptime(d[:10], "%d.%m.%Y").date() if "." in d else date.fromisoformat(d[:10])
@@ -59,7 +51,6 @@ def rel(ctx, d: date | str) -> str:
 
 
 def fio(s: str | None) -> str:
-    """'СТРОК МАРИНА ИВАНОВНА' → 'Строк Марина Ивановна' (с дефисами тоже)."""
     return " ".join("-".join(p.capitalize() for p in w.split("-")) for w in (s or "").split())
 
 
@@ -69,7 +60,6 @@ def fio_short(s: str | None) -> str:
 
 
 def company_name(s: str) -> str:
-    """ООО "МОСТАР" → ООО «МОСТАР»"""
     return re.sub(r'"([^"]*)"', r"«\1»", s or "")
 
 
@@ -80,7 +70,6 @@ def cap1(s: str) -> str:
 
 
 def decap(s: str) -> str:
-    """Строчная — только первая буква: «За III квартал» → «за III квартал» (римские цифры не трогаем)."""
     return s[:1].lower() + s[1:] if s else s
 
 
@@ -88,7 +77,6 @@ env.filters.update(cap1=cap1, decap=decap, date_ru=date_ru, date_short=date_shor
                    fio_short=fio_short, plural=plural, as_date=as_date)
 
 
-# ----------------------------------------------------------------- контекст
 def company_ctx(egrul: dict | None, msp: dict | None, inn: str) -> dict:
     name = (egrul or {}).get("short_name") or (msp or {}).get("name") or inn
     return {"name": company_name(name), "inn": inn,
@@ -121,21 +109,17 @@ def render(template: str, ctx: dict) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
-# ----------------------------------------------------------------- клавиатура и тело
 def keyboard(event_ids: list[int], app: dict | None = None) -> dict:
-    """Кнопки под пушем: одно решение в чате, всё остальное — в мини-приложении («Открыть»).
-    «В список дел» — событие остаётся задачей в приложении, сообщение уходит из чата."""
-    ids = ",".join(map(str, event_ids))           # payload короткий: ev:<ids>:<action>
+    ids = ",".join(map(str, event_ids))
     rows = [[{"type": "callback", "text": "📋 В список дел", "payload": f"ev:{ids}:list"},
              {"type": "callback", "text": "✅ Сделано", "payload": f"ev:{ids}:done"}],
             [{"type": "callback", "text": "🔕 Не актуально", "payload": f"ev:{ids}:mute"}]]
-    if app:  # app — bot.client.bot_app(): web_app и contact_id бота; диплинк task_<id> открывает экран события
+    if app:
         rows[1].append({"type": "open_app", "text": "Открыть", **app, "payload": f"task_{event_ids[0]}"})
     return {"type": "inline_keyboard", "payload": {"buttons": rows}}
 
 
 def flag_keyboard(flag: str) -> dict:
-    """Вопрос о признаке компании (radar.laws.FLAGS): ответ — в business_profiles.flags, «да» досылает акты."""
     row = [{"type": "callback", "text": text, "payload": f"flag:{flag}:{value}"}
            for text, value in (("Да", "yes"), ("Нет", "no"))]
     return {"type": "inline_keyboard", "payload": {"buttons": [row]}}

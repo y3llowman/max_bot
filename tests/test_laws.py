@@ -1,9 +1,3 @@
-"""Новые законы → кого касаются (radar/laws.py). Без сети и БД: названия — настоящие акты
-с pravo.gov.ru за июнь–сентябрь 2026, текст — в формате «Актуальных редакций» (надстрочные
-номера статей там через пробел: «346 12» — это 346.12).
-
-Запуск из корня репозитория: python -m unittest discover -s tests
-"""
 import os
 import sys
 import unittest
@@ -13,8 +7,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 os.environ.setdefault("MAX_TOKEN", "test")
 
-from radar import laws  # noqa: E402
-from radar.deadlines import Profile  # noqa: E402
+from radar import laws
+from radar.deadlines import Profile
 
 PUBLISHED = date(2026, 8, 4)
 
@@ -33,7 +27,6 @@ class Titles(unittest.TestCase):
     def test_tax_code_articles_map_to_chapters(self):
         self.assertEqual(topics("О внесении изменений в статьи 166 и 168 части второй Налогового кодекса "
                                 "Российской Федерации"), ["vat"])
-        # 85 и 102 — сведения госорганов и налоговая тайна: не про бизнес; 227.1 — НДФЛ иностранцев с патентом
         self.assertEqual(topics("О внесении изменений в статьи 85 и 102 части первой и статью 227-1 части второй "
                                 "Налогового кодекса Российской Федерации"), ["foreign"])
 
@@ -66,7 +59,6 @@ class Titles(unittest.TestCase):
         self.assertIsNone(topics("О внесении изменений в отдельные законодательные акты Российской Федерации"))
         self.assertIsNone(topics("О внесении изменений в часть вторую Налогового кодекса Российской Федерации"))
         self.assertIsNone(topics("О внесении изменений в Кодекс Российской Федерации об административных правонарушениях"))
-        # название называет изменяемый закон, и он не про бизнес — ждать нечего
         self.assertEqual(topics("О внесении изменений в Федеральный закон «О карантине растений»"), [])
 
     def test_amended_act_found_by_number(self):
@@ -104,13 +96,12 @@ class Text(unittest.TestCase):
         m = meta("Федеральный закон от 04.08.2026 № 331-ФЗ", "О внесении изменений в отдельные законодательные акты "
                                                           "Российской Федерации")
         law = laws.classify(m, [], LAW_TEXT)
-        self.assertEqual(law.topics, ["usn", "kkt"])  # статья 12 закона № 98-ФЗ внутри НК — не статья НК
+        self.assertEqual(law.topics, ["usn", "kkt"])
         self.assertEqual(law.amended, ["О применении контрольно-кассовой техники при осуществлении расчетов "
-                                       "в Российской Федерации"])  # закон о военнослужащих — не для бизнеса
+                                       "в Российской Федерации"])
         self.assertEqual(law.effective, [date(2026, 8, 15), date(2027, 1, 1)])
 
     def test_state_duty_is_not_profit_tax(self):
-        """Глава 25.3 (госпошлина, статьи 333.16–333.44) идёт сразу после главы 25 — не путать."""
         text = ("Статья 1\nВнести в часть вторую Налогового кодекса Российской Федерации следующие изменения:\n"
                 "1) в пункте 1 статьи 333 28 цифры \"1200\" заменить цифрами \"2000\";\n"
                 "2) пункт 2 статьи 333 29 изложить в следующей редакции:")
@@ -123,7 +114,6 @@ class Text(unittest.TestCase):
                                               "опубликования.", PUBLISHED), [PUBLISHED])
         self.assertEqual(laws.effective_dates("Настоящий приказ вступает в силу с 1 марта 2027 г.", PUBLISHED),
                          [date(2027, 3, 1)])
-        # дата внутри вносимых изменений — не дата вступления акта в силу
         self.assertEqual(laws.effective_dates("С 1 марта 2027 г. участник оборота формирует УПД.", PUBLISHED), [])
 
 
@@ -161,7 +151,7 @@ class Drafts(unittest.TestCase):
         [d] = laws.drafts(self.law(["usn"], effective=[date(2027, 1, 1)]), profile(), self.TODAY)
         self.assertEqual((d.type, d.key, d.due), ("law.upcoming", "law:0001202609250001:7707083893", date(2027, 1, 1)))
         self.assertEqual(d.payload["reasons"], ["вы на УСН доходы"])
-        self.assertIn("Декларация по УСН", d.payload["obligations"])  # какие задачи компании может изменить
+        self.assertIn("Декларация по УСН", d.payload["obligations"])
         self.assertEqual(laws.drafts(self.law(["usn"]), profile(tax_regime="osno"), self.TODAY), [])
 
     def test_already_in_force_is_not_a_task(self):
@@ -175,7 +165,7 @@ class Drafts(unittest.TestCase):
     def test_unknown_flag_asks_once_answer_decides(self):
         [q] = laws.drafts(self.law(["kkt", "marking"]), profile(), self.TODAY)[:1]
         self.assertEqual((q.type, q.key), ("profile.question", "q:7707083893:cash_register"))
-        self.assertEqual(len(laws.drafts(self.law(["kkt", "marking"]), profile(), self.TODAY)), 2)  # по вопросу на признак
+        self.assertEqual(len(laws.drafts(self.law(["kkt", "marking"]), profile(), self.TODAY)), 2)
         [d] = laws.drafts(self.law(["kkt"]), profile(flags={"cash_register": True}), self.TODAY)
         self.assertEqual((d.type, d.payload["reasons"]), ("law.upcoming", ["вы принимаете оплату через кассу"]))
         self.assertEqual(laws.drafts(self.law(["kkt"]), profile(flags={"cash_register": False}), self.TODAY), [])

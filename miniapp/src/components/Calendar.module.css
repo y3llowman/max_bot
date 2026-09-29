@@ -4,12 +4,10 @@
   border-radius: var(--radius-l);
 }
 
-/* Неделя 138 = 1 + 6 + шапка 44 + 6 + дни 68 + 12 + 1 */
 .weekCard {
   padding: 6px 8px 12px;
 }
 
-/* Месяц 320 при 5 неделях = 1 + 6 + 44 + 8 + 16 + 6 + 5×46 + 8 + 1 */
 .monthCard {
   padding: 6px 0 8px;
 }

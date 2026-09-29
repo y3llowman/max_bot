@@ -1,5 +1,3 @@
-/* 04: чип → 10 → иконка 44 и заголовок → 16 → аккордеоны. */
-
 .status {
   display: flex;
   align-items: center;
@@ -25,7 +23,6 @@
   flex: none;
 }
 
-/* E4: кольцо 88 в 16px под шапкой, заголовок и текст через 12. */
 .done {
   display: flex;
   flex-direction: column;

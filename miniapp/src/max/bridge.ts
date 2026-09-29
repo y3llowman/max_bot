@@ -1,8 +1,3 @@
-// Обёртка над MAX Bridge (window.WebApp, скрипт st.max.ru/js/max-web-app.js).
-// Методы — по https://dev.max.ru/docs/webapps/bridge. Вне клиента MAX скрипт
-// тоже создаёт window.WebApp, но с пустым initData — так и отличаем «внутри MAX».
-// Всё, чего нет вне MAX, заменено безопасными заглушками, чтобы приложение
-// открывалось в обычном браузере для разработки и ревью дизайна.
 import { config } from "../utils/config";
 
 export type Platform = "ios" | "android" | "desktop" | "web";
@@ -21,6 +16,7 @@ interface WebAppBridge {
   };
   openLink(url: string): void;
   openMaxLink(url: string): void;
+  close(): void;
   shareMaxContent(params: { text?: string; link?: string }): void;
   openCodeReader(fileSelect?: boolean): Promise<string> | string;
   HapticFeedback: {
@@ -55,14 +51,31 @@ export function platform(): Platform {
   return "web";
 }
 
-/** Сырая строка initData — уходит на бэкенд для проверки подписи. */
+let relaunched: string | null = null;
+
 export function initData(): string {
-  return wa()?.initData ?? "";
+  return relaunched ?? wa()?.initData ?? "";
 }
 
-/** Параметр диплинка https://max.ru/<бот>?startapp=<payload>: до 512 символов, [A-Za-z0-9_-]. */
+function startParamOf(data: string): string | undefined {
+  try {
+    return new URLSearchParams(decodeURIComponent(data)).get("start_param") || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function startParam(): string | undefined {
-  return wa()?.initDataUnsafe.start_param || undefined;
+  return relaunched ? startParamOf(relaunched) : wa()?.initDataUnsafe.start_param || undefined;
+}
+
+export function onRelaunch(cb: (startParam: string | undefined) => void): void {
+  window.addEventListener("hashchange", (e) => {
+    const data = new URLSearchParams(new URL(e.newURL).hash.slice(1)).get("WebAppData");
+    if (!data || !wa()) return;
+    relaunched = data;
+    cb(startParamOf(data));
+  });
 }
 
 export const backButton = {
@@ -84,21 +97,20 @@ export function chatUrl(): string {
   return config.botName ? `https://max.ru/${config.botName}` : "https://max.ru";
 }
 
-/** Внешняя ссылка (сайт ФНС, текст закона) — во внешнем браузере. */
 export function openLink(url: string): void {
   const app = wa();
   if (app) app.openLink(url);
   else window.open(url, "_blank", "noopener");
 }
 
-/** «В чат MAX»: открыть диалог с ботом внутри мессенджера. */
 export function openChat(): void {
   const app = wa();
-  if (app) app.openMaxLink(chatUrl());
-  else window.open(chatUrl(), "_blank", "noopener");
+  if (app) {
+    app.openMaxLink(chatUrl());
+    app.close();
+  } else window.open(chatUrl(), "_blank", "noopener");
 }
 
-/** Сканер QR клиента MAX. null — сканер недоступен (браузер) или пользователь закрыл его. */
 export async function scanQr(): Promise<string | null> {
   const app = wa();
   if (!app) return null;

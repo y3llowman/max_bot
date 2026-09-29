@@ -1,5 +1,3 @@
-/* Task Card, 353×96: иконка 40 / r12, текст с отступом 69, шеврон 20 по центру иконки. */
-
 .card {
   display: flex;
   align-items: flex-start;

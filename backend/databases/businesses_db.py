@@ -27,36 +27,27 @@ class Business(Base):
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     website: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    employees_num: Mapped[int | None] = mapped_column(Integer, nullable=True)  # среднесписочная из реестра МСП
+    employees_num: Mapped[int | None] = mapped_column(Integer, nullable=True)
     has_licenses: Mapped[bool] = mapped_column(Boolean)
     is_hitech: Mapped[bool] = mapped_column(Boolean)
     is_partnership: Mapped[bool] = mapped_column(Boolean)
     is_social: Mapped[bool] = mapped_column(Boolean)
-    # когда последний раз перечитали реестр МСП — «обновлено …» в профиле мини-приложения
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class UserBusiness(Base):
-    """Связь многие-ко-многим: у пользователя может быть несколько ИНН, один ИНН — у нескольких пользователей."""
-
     __tablename__ = "user_businesses"
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
     inn: Mapped[str] = mapped_column(String(12), ForeignKey("businesses.inn"), primary_key=True, index=True)
-    # текущая компания пользователя — последняя подключённая
     connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class CompanyTaken(Exception):
-    """ИНН уже подключил другой пользователь. Одну компанию ведёт один аккаунт: ИНН публичен, и иначе
-    посторонний менял бы владельцу режим, признаки и статусы задач. В рабочей версии владельца
-    подтверждала бы авторизация через Госуслуги (ЕСИА)."""
+    pass
 
 
 async def save_business(db: AsyncSession, user_id: int, record: RmspRecord) -> Business:
-    """Сохраняет компанию из реестра МСП и делает её текущей у пользователя. Общее для бота и API.
-    Прежняя компания пользователя отвязывается: напоминания и события идут по всем связанным ИНН,
-    и опечатка в ИНН иначе означала бы чужие сроки навсегда."""
     taken = await db.scalar(select(UserBusiness.user_id).where(UserBusiness.inn == record.inn,
                                                               UserBusiness.user_id != user_id).limit(1))
     if taken is not None:
@@ -64,7 +55,6 @@ async def save_business(db: AsyncSession, user_id: int, record: RmspRecord) -> B
     now = datetime.now(timezone.utc)
 
     business = await db.get(Business, record.inn) or Business(inn=record.inn)
-    # поля Business совпадают с полями RmspRecord
     for field, value in asdict(record).items():
         setattr(business, field, value)
     business.updated_at = now
@@ -86,7 +76,6 @@ async def save_business(db: AsyncSession, user_id: int, record: RmspRecord) -> B
 
 
 async def current_business(db: AsyncSession, user_id: int) -> Business | None:
-    """Текущая компания пользователя — последняя подключённая, в боте или в мини-приложении."""
     result = await db.execute(
         select(Business)
         .join(UserBusiness)

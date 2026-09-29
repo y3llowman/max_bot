@@ -14,13 +14,13 @@ import { StateView } from "../components/StateView";
 import { TaskCard } from "../components/TaskCard";
 import { useToast } from "../components/Toast";
 import { parseISO, timeLeft } from "../utils/dates";
+import { dashboardGroup } from "../utils/tasks";
 import { useAsync } from "../utils/useAsync";
 import { haptic, openChat } from "../max/bridge";
 import s from "./Task.module.css";
 
 const TITLE = "Задача";
 
-/** 04 · Детали задачи, E5 · Результат действия, E4 · Задача выполнена, S4 · загрузка, S5 · ошибка. */
 export function TaskScreen() {
   const { id = "" } = useParams();
   const { data: task, error, loading, reload } = useAsync(() => api.task(id), [id]);
@@ -39,8 +39,6 @@ function TaskOpen({ task }: { task: TaskDetails }) {
 
   useEffect(() => setBusy(false), [task.id]);
 
-  // Действие закрывает экран — возвращаемся на главную; уведомление о результате с отменой.
-  // Пуш об этой задаче сервер убирает из чата.
   const markSubmitted = async () => {
     setBusy(true);
     try {
@@ -75,7 +73,7 @@ function TaskOpen({ task }: { task: TaskDetails }) {
     }
     haptic.success();
     navigate("/tasks");
-    toast({ text: "Добавили в список дел — раздел «Без срока»" });
+    toast({ text: "Добавили в список дел — он на главной" });
   };
 
   const generate = async () => {
@@ -91,6 +89,8 @@ function TaskOpen({ task }: { task: TaskDetails }) {
     }
   };
 
+  const canList = !task.listed && !dashboardGroup(task);
+
   return (
     <Screen
       title={TITLE}
@@ -102,22 +102,29 @@ function TaskOpen({ task }: { task: TaskDetails }) {
             <Button variant="outline" disabled={busy} onClick={markSubmitted}>
               Выполнено
             </Button>
-            {task.document && (
+            {task.document ? (
               <Button disabled={generating} onClick={generate}>
                 Подготовить документ
               </Button>
-            )}
-            {!task.due && !task.listed && (
-              <Button disabled={busy} onClick={addToList}>
-                В список дел
-              </Button>
+            ) : (
+              canList && (
+                <Button disabled={busy} onClick={addToList}>
+                  В список дел
+                </Button>
+              )
             )}
           </ActionRow>
+          {task.document && canList && (
+            <Button block variant="ghost" disabled={busy} onClick={addToList}>
+              В список дел
+            </Button>
+          )}
         </ActionBar>
       }
     >
       <div className={s.status}>
-        {task.due ? <StatusChip status={task.status} /> : <Chip tone="info">{task.listed ? "В списке дел" : "Без срока"}</Chip>}
+        {task.due ? <StatusChip status={task.status} /> : !task.listed && <Chip tone="info">Без срока</Chip>}
+        {task.listed && <Chip tone="info">В списке дел</Chip>}
         {task.periodicity && <Chip tone="neutral">{task.periodicity}</Chip>}
         {task.due && <span className="t-note-strong c-secondary">{timeLeft(parseISO(task.due))}</span>}
       </div>
@@ -127,13 +134,11 @@ function TaskOpen({ task }: { task: TaskDetails }) {
         </span>
         <h1 className="t-subheader">{task.heading}</h1>
       </div>
-      {/* «Почему я это вижу» раскрыт сразу: доверие к ленте держится на объяснении */}
       <Accordion sections={task.sections} defaultOpen={["why", "risks"]} />
     </Screen>
   );
 }
 
-/** E4. Главное действие после выполнения — вернуться в чат MAX. */
 function TaskDone({ task }: { task: TaskDetails }) {
   const navigate = useNavigate();
   return (
@@ -208,7 +213,6 @@ function TaskError({ error, onRetry }: { error: unknown; onRetry: () => void }) 
   );
 }
 
-/** S4: раскладка экрана задачи, кнопки неактивны. */
 function TaskLoading() {
   return (
     <Screen

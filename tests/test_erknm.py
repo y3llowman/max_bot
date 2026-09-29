@@ -1,7 +1,3 @@
-"""ЕРКНМ: разбор выгрузки proverki.gov.ru и детектор проверок — без БД и сети.
-
-Запуск из корня репозитория: python -m unittest discover -s tests
-"""
 import io
 import sys
 import unittest
@@ -11,14 +7,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from data_fetching import erknm_client  # noqa: E402
-from radar import detectors as det  # noqa: E402
-from radar.render import build_context, company_ctx, render  # noqa: E402
+from data_fetching import erknm_client
+from radar import detectors as det
+from radar.render import build_context, company_ctx, render
 
 TODAY = date(2026, 9, 27)
 INN = "7701234567"
 
-# Структура — как в выгрузке «Проверки на октябрь 2026» (data-20260927-structure-20220125.xml), данные вымышленные
 XML = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <ns2:INSPECTIONS YEAR="2026" MONTH="10" xmlns="https://proverki.gov.ru/opendata/3.0/20220115" xmlns:ns2="https://proverki.gov.ru/opendata/3.0/20220125">
   <INSPECTION CLASSIFICATION="КНМ" STATUS="Ожидает проведения" STATUS_KEY="TYPE_WAITING_CARRY_OUT" ERPID="1001" TYPE_NAME="Внеплановое КНМ" START_DATE="2026-10-19" STOP_DATE="2026-10-21">

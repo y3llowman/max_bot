@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { Icon } from "./Icon";
 import s from "./List.module.css";
 
-/** Группа строк на карточке: r16, разделители на всю внутреннюю ширину. */
 export function ListGroup({ children, label, radio }: { children: ReactNode; label?: string; radio?: boolean }) {
   return (
     <div className={s.group} role={radio ? "radiogroup" : label ? "group" : undefined} aria-label={label}>
@@ -15,21 +14,16 @@ interface CellProps {
   title: string;
   caption?: string;
   value?: string;
-  /** Элемент слева: радио. */
   lead?: ReactNode;
-  /** Элемент справа: переключатель. */
   trail?: ReactNode;
   chevron?: boolean;
   onClick?: () => void;
-  /** Роль и состояние для скринридера: switch/radio. */
   role?: "switch" | "radio";
   checked?: boolean;
   disabled?: boolean;
-  /** Нативный выбор поверх строки — для темы и тихих часов. */
   select?: { value: string; options: { value: string; label: string }[]; onChange: (v: string) => void };
 }
 
-/** List Cell: 48 для навигации, 56 с переключателем, 52 с радио — как в макетах. */
 export function ListCell({ title, caption, value, lead, trail, chevron, onClick, role, checked, disabled, select }: CellProps) {
   const content = (
     <>

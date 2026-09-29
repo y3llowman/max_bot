@@ -1,9 +1,3 @@
-"""Ответы API мини-приложения — зеркало miniapp/src/api/types.ts.
-
-Фронт ждёт camelCase (fullName, nextDue, updatedAt): поля описаны в snake_case,
-а наружу уходят по алиасам. Необязательные поля в контракте — `?:`, а не null,
-поэтому роуты с ними отдают ответ с response_model_exclude_none.
-"""
 from datetime import date, datetime
 from typing import Literal
 
@@ -35,13 +29,13 @@ class Company(CamelModel):
     inn: str
     kpp: str | None = None
     ogrn: str
-    okved: str | None = None       # «41.20 — Строительство жилых и нежилых зданий»
-    category: str | None = None    # «Микропредприятие»
-    headcount: str | None = None   # «16–25 человек»
-    region: str | None = None      # «Республика Татарстан»
-    needs_answers: bool            # режим или численность не указаны — обязанности неполные
+    okved: str | None = None
+    category: str | None = None
+    headcount: str | None = None
+    region: str | None = None
+    needs_answers: bool
     source: Source
-    benefits: list[Benefit] = []   # льготы, которые доступны при численности компании (radar.deadlines)
+    benefits: list[Benefit] = []
 
 
 class Option(CamelModel):
@@ -57,13 +51,12 @@ class ProfileOptions(CamelModel):
 
 
 class ProfileForm(CamelModel):
-    """Экран «Данные компании»: что сейчас в профиле, что в реестре и из чего выбирать."""
     is_legal_entity: bool
     regime: str | None = None
-    headcount: str | None = None           # нижняя граница диапазона из ответа; None — берём реестр
-    registry_headcount: int | None = None  # среднесписочная из реестра МСП
+    headcount: str | None = None
+    registry_headcount: int | None = None
     okved: str
-    registry_okved: str                    # «56.10 — Деятельность ресторанов…»
+    registry_okved: str
     region: str
     registry_region: str
     has_licenses: bool
@@ -75,7 +68,7 @@ class ProfileForm(CamelModel):
 
 class ProfileUpdate(CamelModel):
     regime: str | None = None
-    headcount: str | None = None           # None или «» — как в реестре
+    headcount: str | None = None
     okved: str
     region: str
     has_licenses: bool
@@ -89,8 +82,9 @@ class Task(CamelModel):
     title: str
     subtitle: str
     status: Literal["overdue", "soon", "planned", "done"]
-    due: date | None = None         # нет — событие без срока, взятое «В список дел»
-    periodicity: str | None = None  # «Ежеквартально»
+    due: date | None = None
+    periodicity: str | None = None
+    listed: bool = False
 
 
 class Link(CamelModel):
@@ -111,13 +105,11 @@ class TaskSection(CamelModel):
 class TaskDetails(Task):
     heading: str
     sections: list[TaskSection]
-    document: bool = False  # есть черновик для «Подготовить документ»
-    listed: bool = False    # уже «В списке дел»
+    document: bool = False
     next: Task | None = None
 
 
 class FeedItem(CamelModel):
-    """Строка ленты: о чём бот писал в чат."""
     id: str
     title: str
     subtitle: str

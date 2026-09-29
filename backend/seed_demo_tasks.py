@@ -1,9 +1,3 @@
-"""Демо-сроки в radar_events поверх настоящих обязанностей (их считает notifications/worker.py:
-materialize_for) — чтобы на демо были просроченная и выполненная задачи.
-
-Запуск из корня репозитория: python backend/seed_demo_tasks.py <ИНН>
-Повторный запуск заменяет демо-сроки этого ИНН, даты считаются от сегодняшнего дня.
-"""
 import asyncio
 import sys
 from datetime import timedelta
@@ -14,7 +8,6 @@ from databases import SessionLocal, init_db
 from notifications.models import RadarEvent
 from notifications.planner import today_msk
 
-# (сдвиг срока от сегодня в днях, статус, payload в формате сроков из шаблона deadline.group)
 DEMO = [
     (-2, "open", {"title": "Ответ на требование ФНС", "period": "Пояснения к декларации",
                   "what": "Подготовьте пояснения и отправьте их через оператора ЭДО.",

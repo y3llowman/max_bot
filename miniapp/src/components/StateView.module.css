@@ -1,5 +1,3 @@
-/* Блок центрируется по вертикали в свободном месте экрана — как в S2, S3, S5, S6. */
-
 .state {
   display: flex;
   flex-direction: column;

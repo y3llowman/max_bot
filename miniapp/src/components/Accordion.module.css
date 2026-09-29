@@ -1,5 +1,3 @@
-/* Строка 64 = 12 + плитка 40 + 12; текст раскрытого пункта — под заголовком (отступ 68). */
-
 .group {
   background: var(--surface);
   border: 1px solid var(--border);

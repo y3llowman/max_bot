@@ -5,13 +5,9 @@ import { Icon } from "./Icon";
 import s from "./Screen.module.css";
 
 interface Props {
-  /** Заголовок в шапке MAX: название приложения на верхнем уровне, «Задача», «Календарь»… */
   title: string;
-  /** По заметке дизайнера: верхний уровень — крестик, вложенные — стрелка ‹. */
   nav?: "close" | "back";
-  /** Вертикальный шаг между блоками контента. */
   gap?: number;
-  /** Нижняя панель вложенного экрана. Таббар добавляет раскладка разделов. */
   bottom?: ReactNode;
   children: ReactNode;
 }
@@ -21,7 +17,6 @@ export const APP_NAME = "Хакатон MAX 267";
 export function useGoBack(fallback = "/tasks") {
   const navigate = useNavigate();
   return useCallback(() => {
-    // react-router хранит номер записи истории в history.state.idx
     const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
     if (idx > 0) navigate(-1);
     else navigate(fallback, { replace: true });
@@ -35,7 +30,6 @@ export function Screen({ title, nav = "close", gap = 12, bottom, children }: Pro
     document.title = title;
   }, [title]);
 
-  // Во вложенных экранах стрелку рисует MAX — подписываемся на её нажатие.
   useEffect(() => {
     if (nav !== "back") return;
     backButton.show(goBack);
@@ -53,7 +47,6 @@ export function Screen({ title, nav = "close", gap = 12, bottom, children }: Pro
   );
 }
 
-/** Шапка MAX для браузера. Внутри клиента её рисует сам MAX, поэтому там её нет. */
 function DevChrome({ title, nav, onBack }: { title: string; nav: "close" | "back"; onBack: () => void }) {
   return (
     <header className={s.chrome}>

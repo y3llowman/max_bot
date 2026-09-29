@@ -35,7 +35,7 @@ async def webapp_auth(payload: AuthRequest, db: AsyncSession = Depends(get_db)):
     user.language_code = user_data.get("language_code")
     user.photo_url = user_data.get("photo_url")
     user.last_login = datetime.now(timezone.utc)
-    user.is_active = True  # открыл приложение — снова доступен, даже если раньше блокировал бота
+    user.is_active = True
     await db.commit()
 
     return {"access_token": create_access_token(max_user_id), "token_type": "bearer"}

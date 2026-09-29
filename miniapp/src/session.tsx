@@ -1,10 +1,7 @@
-// Подключённая компания. Грузится один раз при запуске; экраны разделов
-// ждут её, а без компании уводят на «Подключите компанию».
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { ApiError, api } from "./api/client";
 import type { Company } from "./api/types";
 
-/** unauthorized — вход не подтверждён: приложение открыто не из MAX или initData не прошёл проверку. */
 type Status = "loading" | "ready" | "none" | "error" | "unauthorized";
 
 interface Session {

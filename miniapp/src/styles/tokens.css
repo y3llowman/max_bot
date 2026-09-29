@@ -1,12 +1,6 @@
-/* Токены из design/UI Kit v2.svg, раздел «Палитра».
-   Имена повторяют кит: text/primary → --text-primary, dark/surface → тот же
-   --surface в тёмной теме. Тема выставляется атрибутом data-theme на <html>
-   (см. src/lib/theme.ts); компоненты используют только роли, не хексы. */
-
 :root {
   color-scheme: light;
 
-  /* бренд */
   --primary: #514cfe;
   --primary-strong: #3b36bd;
   --primary-dark: #2f2b9e;
@@ -15,7 +9,6 @@
   --primary-text: #302ca8;
   --primary-ring: #514cfe;
 
-  /* статусы: base — точки и иконки, soft — фон, strong — текст */
   --success: #22c55e;
   --success-soft: #dcfce7;
   --success-strong: #14532d;
@@ -30,7 +23,6 @@
   --info-soft: #e0f2fe;
   --info-strong: #0c4a6e;
 
-  /* нейтральные */
   --text-primary: #0f172a;
   --text-secondary: #3e4a5c;
   --text-tertiary: #94a3b8;
@@ -44,16 +36,13 @@
   --toggle-off: #7c889a;
   --overlay: #0f172a66;
 
-  /* toast — инверсия поверхности, в обеих темах из тех же ролей */
   --toast-bg: var(--text-primary);
   --toast-text: var(--bg);
   --toast-action: var(--primary-light);
 
-  /* хром MAX — только для эмуляции шапки в браузере (max/header, max/verified) */
   --max-header: #ffffff;
   --max-verified: #1a8cff;
 
-  /* геометрия */
   --gutter: 20px;
   --radius-s: 8px;
   --radius-m: 12px;

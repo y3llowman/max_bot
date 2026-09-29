@@ -4,10 +4,8 @@ import s from "./Toast.module.css";
 
 interface ToastOptions {
   text: string;
-  /** По умолчанию check-circle, как в ките; для сбоев — alert-circle. */
   icon?: IconName;
   action?: { label: string; onClick: () => void };
-  /** Вызывается, если тост закрылся сам, без нажатия на действие — например, «Отменить» не нажали. */
   onTimeout?: () => void;
   duration?: number;
 }
@@ -22,7 +20,6 @@ export function useToast() {
   return useContext(ToastContext);
 }
 
-/** Toast — сообщение о результате действия, над нижней панелью, 5 секунд. */
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toast, setToast] = useState<ToastState | null>(null);
   const timer = useRef<number | undefined>(undefined);

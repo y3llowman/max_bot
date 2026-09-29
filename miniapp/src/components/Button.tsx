@@ -15,7 +15,6 @@ export function Button({ variant = "primary", size = "l", block, className, type
 
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   icon: IconName;
-  /** Обязательна: у кнопки без текста должно быть имя для скринридера. */
   label: string;
   size?: number;
   outlined?: boolean;

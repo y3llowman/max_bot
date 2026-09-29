@@ -24,7 +24,6 @@
   color: var(--primary-text);
 }
 
-/* iOS: 57 = разделитель 1 + 9 + иконка 24 + 2 + подпись 16 + 5 */
 .ios {
   border-top: 1px solid var(--border);
   padding-left: var(--gutter);
@@ -46,7 +45,6 @@
   font-weight: 600;
 }
 
-/* Android: 64 = 12 + пилюля 32 + 4 + подпись 16, без разделителя */
 .android .tab {
   gap: 4px;
   padding: 12px 0 0;

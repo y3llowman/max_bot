@@ -1,5 +1,3 @@
-// Даты храним строками YYYY-MM-DD и разбираем в локальное время:
-// так «20 июля» не уезжает на 19-е из-за часового пояса.
 import { config, isMock } from "./config";
 
 const MONTHS_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля",
@@ -34,7 +32,6 @@ export function addMonths(d: Date, n: number): Date {
   return new Date(d.getFullYear(), d.getMonth() + n, 1);
 }
 
-/** Понедельник недели, в которую попадает дата. */
 export function startOfWeek(d: Date): Date {
   return addDays(d, -((d.getDay() + 6) % 7));
 }
@@ -55,22 +52,18 @@ export function weekdayShort(d: Date): string {
   return WEEKDAYS[(d.getDay() + 6) % 7];
 }
 
-/** «20 июля» */
 export function dayMonth(d: Date): string {
   return `${d.getDate()} ${MONTHS_GEN[d.getMonth()]}`;
 }
 
-/** «Пн, 20 июля» */
 export function dayTitle(d: Date): string {
   return `${weekdayShort(d)}, ${dayMonth(d)}`;
 }
 
-/** «Июль 2026» */
 export function monthTitle(d: Date): string {
   return `${MONTHS_NOM[d.getMonth()]} ${d.getFullYear()}`;
 }
 
-/** «20 – 26 июля» или «27 июля – 2 августа» */
 export function weekRange(monday: Date): string {
   const sunday = addDays(monday, 6);
   return monday.getMonth() === sunday.getMonth()
@@ -78,14 +71,12 @@ export function weekRange(monday: Date): string {
     : `${dayMonth(monday)} – ${dayMonth(sunday)}`;
 }
 
-/** «21 июля, 18:40» */
 export function dateTime(iso: string): string {
   const d = new Date(iso);
   const p = (n: number) => String(n).padStart(2, "0");
   return `${dayMonth(d)}, ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-/** «сегодня в 08:12» / «вчера в 18:40» / «21 июля в 18:40» */
 export function updatedAt(iso: string): string {
   const d = new Date(iso);
   const p = (n: number) => String(n).padStart(2, "0");
@@ -107,7 +98,6 @@ export function plural(n: number, forms: [string, string, string]): string {
 
 const DAYS: [string, string, string] = ["день", "дня", "дней"];
 
-/** «осталось 5 дней» / «срок сегодня» / «просрочено на 2 дня» */
 export function timeLeft(due: Date, now = today()): string {
   const n = diffDays(due, now);
   if (n > 0) return `осталось ${n} ${plural(n, DAYS)}`;

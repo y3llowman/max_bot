@@ -1,16 +1,3 @@
-"""Фоновые задачи радара. Планировщик запускается внутри процесса бота (bot/main_longpooling.py):
-бот работает в одном экземпляре, поэтому задачи не задвоятся. Не запускайте его в uvicorn
-с несколькими воркерами.
-
-Расписание (Europe/Moscow):
-  03:00 ежедневно      sync_egrul        выписка ЕГРЮЛ: недостоверность, дисквалификация, ликвидация, смена руководителя/адреса/участников
-  04:00 11-го числа    sync_msp          реестр МСП публикуется 10-го: исключение, смена категории
-  04:30 ежедневно      check_inspections ЕРКНМ: проверки и профвизиты по ИНН, предостережения
-  05:00 ежедневно      materialize       сроки обязанностей на год вперёд по профилю компании
-  07:00 ежедневно      ingest_laws       новые акты pravo.gov.ru → каким компаниям они касаются
-  09:00 ежедневно      queue_reminders   напоминания по настройкам пользователя, после срока — каждый день
-  каждую минуту        dispatch          outbox (notifications) → MAX
-"""
 from __future__ import annotations
 
 import asyncio
@@ -49,13 +36,12 @@ from .planner import MSK, REMIND_HOUR, NotificationSettings, reminder_label, tod
 
 logger = logging.getLogger(__name__)
 
-WINDOW_DAYS = 365  # сроки обязанностей — на год вперёд
-LAW_LOOKBACK_DAYS = 10  # текст законов и постановлений появляется на портале через 1–7 дней после публикации
-LAW_RECENT_DAYS = 30  # акты, которые досылаем после ответа «да» и по /demo_law; столько же загружаем при первом старте
-PDF_LIMIT = 20 * 1024 * 1024  # PDF больше — только ссылкой
+WINDOW_DAYS = 365
+LAW_LOOKBACK_DAYS = 10
+LAW_RECENT_DAYS = 30
+PDF_LIMIT = 20 * 1024 * 1024
 
 
-# ---- реестры ------------------------------------------------------------------
 async def fetch_egrul(inn: str) -> dict | None:
     extract = await asyncio.to_thread(egrul_client.get_extract, inn)
     return asdict(extract) if extract is not None else None
@@ -67,7 +53,6 @@ async def fetch_msp(inn: str) -> dict | None:
 
 
 async def save_snapshot(inn: str, source: str, data: dict | None) -> dict | None:
-    """Кладёт снимок в registry_snapshots, если он изменился, и возвращает ПРЕДЫДУЩИЙ."""
     data_hash = hashlib.sha1(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     async with SessionLocal() as db:
         prev = (await db.execute(
@@ -82,7 +67,6 @@ async def save_snapshot(inn: str, source: str, data: dict | None) -> dict | None
 
 
 async def upsert_events(inn: str, source: str, drafts: list[det.Draft]) -> list[RadarEvent]:
-    """Записывает черновики; возвращает только реально новые. Уникальность key — индексы в models.py."""
     new = []
     async with SessionLocal() as db:
         for d in drafts:
@@ -99,7 +83,6 @@ async def upsert_events(inn: str, source: str, drafts: list[det.Draft]) -> list[
 
 
 async def open_condition_keys(inn: str, source: str) -> dict[str, str]:
-    """{key: type} открытых состояний."""
     async with SessionLocal() as db:
         rows = await db.execute(
             select(RadarEvent.key, RadarEvent.type)
@@ -110,7 +93,6 @@ async def open_condition_keys(inn: str, source: str) -> dict[str, str]:
 
 
 async def close_conditions(inn: str, keys: list[str]) -> list[RadarEvent]:
-    """resolved_at=now; вернуть закрытые события."""
     if not keys:
         return []
     async with SessionLocal() as db:
@@ -127,7 +109,6 @@ async def close_conditions(inn: str, keys: list[str]) -> list[RadarEvent]:
 
 
 async def alert(events: list[RadarEvent]) -> None:
-    """Срочные события — отдельным сообщением всем пользователям компании (уйдёт в ближайший dispatch)."""
     now = datetime.now(timezone.utc)
     async with SessionLocal() as db:
         for event in events:
@@ -139,9 +120,6 @@ async def alert(events: list[RadarEvent]) -> None:
 
 
 async def reopen_conditions(inn: str, source: str, drafts: list[det.Draft], today: date) -> list[RadarEvent]:
-    """Состояние отметили «Сделано», а реестр его всё ещё показывает. Реестр обновляется не сразу,
-    поэтому ждём обычный интервал повтора (repeat_days) от последнего сообщения, потом снова открываем
-    и пишем (метка recheck:<день> — чтобы не совпасть с первым alert)."""
     keys = [d.key for d in drafts if CATALOG[d.type].kind == "condition"]
     if not keys:
         return []
@@ -170,15 +148,14 @@ async def process_egrul(inn: str, today: date) -> None:
     prev = await save_snapshot(inn, "egrul", cur)
     drafts = det.egrul_conditions(inn, cur, today) + det.egrul_changes(inn, prev, cur, today)
     await reopen_conditions(inn, "egrul", drafts, today)
-    new_events = await upsert_events(inn, "egrul", drafts)   # только реально новые
+    new_events = await upsert_events(inn, "egrul", drafts)
     gone = det.reconcile_conditions(await open_condition_keys(inn, "egrul"), drafts)
     closed = await close_conditions(inn, gone)
-    new_events += await upsert_events(inn, "egrul", det.resolutions(closed, today))  # «отметка снята»
+    new_events += await upsert_events(inn, "egrul", det.resolutions(closed, today))
     await alert(new_events)
 
 
 async def process_msp(inn: str, cur: dict | None, today: date) -> list[RadarEvent]:
-    """Снимок реестра МСП → исключение, отсутствие в реестре, смена категории."""
     prev = await save_snapshot(inn, "msp", cur)
     drafts = det.msp_changes(inn, prev, cur, today)
     reopened = await reopen_conditions(inn, "msp", drafts, today)
@@ -189,18 +166,17 @@ async def process_msp(inn: str, cur: dict | None, today: date) -> list[RadarEven
 
 
 async def process_inspections(inns: set[str], today: date) -> None:
-    """ЕРКНМ: месячные выгрузки скачиваем один раз на все ИНН (4 архива по несколько МБ)."""
     knms: dict[str, list[dict]] = defaultdict(list)
     for year, month in erknm_client.months_around(today):
         try:
             for knm in await asyncio.to_thread(erknm_client.fetch_month, year, month, inns):
                 knms[knm.inn].append(asdict(knm))
-        except Exception:  # без одного месяца остальные всё равно проверим
+        except Exception:
             logger.exception("erknm %s-%s failed", year, month)
     for inn in inns:
         drafts, cancelled = det.inspection_events(inn, knms[inn], today)
         await alert(await upsert_events(inn, "erknm", drafts))
-        if cancelled:  # отменённое мероприятие — не напоминаем и не показываем в задачах
+        if cancelled:
             async with SessionLocal() as db:
                 await db.execute(update(RadarEvent).where(RadarEvent.inn == inn, RadarEvent.key.in_(cancelled))
                                  .values(status="muted"))
@@ -213,14 +189,11 @@ async def check_inspections() -> None:
         await process_inspections(inns, today_msk())
 
 
-_scanning: set[str] = set()              # ИНН, по которым сейчас идёт фоновая проверка
-_erknm_checked: dict[str, date] = {}     # ИНН → день, когда по нему уже качали ЕРКНМ
+_scanning: set[str] = set()
+_erknm_checked: dict[str, date] = {}
 
 
 async def scan_in_background(inn: str) -> None:
-    """ЕГРЮЛ и ЕРКНМ после подключения, «Обновить» и «Просканировать сейчас». По одному ИНН —
-    одна проверка за раз: повторное нажатие, пока идёт прошлая, ничего не запускает. ЕРКНМ
-    (4 архива, около двух минут) — не чаще раза в день: ночью её всё равно проверяет check_inspections."""
     if inn in _scanning:
         return
     _scanning.add(inn)
@@ -228,7 +201,7 @@ async def scan_in_background(inn: str) -> None:
     try:
         try:
             await process_egrul(inn, today)
-        except Exception:  # капча ЕГРЮЛ не должна отменять проверку ЕРКНМ
+        except Exception:
             logger.exception("egrul scan failed for %s", inn)
         if _erknm_checked.get(inn) != today:
             await process_inspections({inn}, today)
@@ -247,13 +220,11 @@ async def active_inns() -> list[str]:
         return list(rows)
 
 
-EGRUL_PAUSE = 60           # с, между выписками: капча появляется уже после 4–5 выписок подряд
-EGRUL_CAPTCHA_PAUSE = 900  # с, после капчи
+EGRUL_PAUSE = 60
+EGRUL_CAPTCHA_PAUSE = 900
 
 
 async def sync_egrul() -> None:
-    """Ночью по всем компаниям, растянуто: минута между выписками (сотня компаний — меньше двух часов),
-    после капчи — 15 минут и повтор той же компании один раз."""
     today = today_msk()
     for inn in await active_inns():
         for attempt in (1, 2):
@@ -263,7 +234,7 @@ async def sync_egrul() -> None:
                 logger.warning("egrul captcha for %s, attempt %s", inn, attempt)
                 await asyncio.sleep(EGRUL_CAPTCHA_PAUSE)
                 continue
-            except Exception:  # один сбой не должен ронять весь прогон
+            except Exception:
                 logger.exception("egrul sync failed for %s", inn)
             break
         await asyncio.sleep(EGRUL_PAUSE)
@@ -287,11 +258,7 @@ async def sync_msp() -> None:
         await asyncio.sleep(1)
 
 
-# ---- обязанности ----------------------------------------------------------------
 async def load_profile(db: AsyncSession, inn: str) -> Profile | None:
-    """Профиль для правил, бота и мини-приложения. Поправки пользователя (численность, ОКВЭД, регион,
-    лицензии — экран «Данные компании») важнее реестра МСП, который отстаёт; нет ни того, ни другого —
-    бот спросит."""
     business = await db.get(Business, inn)
     if business is None:
         return None
@@ -311,12 +278,6 @@ async def load_profile(db: AsyncSession, inn: str) -> Profile | None:
 
 
 async def materialize_for(inn: str, today: date | None = None) -> tuple[list[str], list[str]]:
-    """Сроки обязанностей компании на год вперёд → radar_events (type=deadline).
-
-    Повторный запуск обновляет тексты и сроки. Будущие открытые сроки обязанностей, которые
-    перестали касаться компании (сменился режим или численность), удаляются.
-    Возвращает (названия новых обязанностей, названия исчезнувших).
-    """
     today = today or today_msk()
     code = RadarEvent.payload["code"].astext
     ours = (RadarEvent.inn == inn, RadarEvent.key.like(f"obl:{inn}:%"))
@@ -334,7 +295,6 @@ async def materialize_for(inn: str, today: date | None = None) -> tuple[list[str
                 continue
             applicable[obligation.code] = obligation
             for due, nominal, period in due_dates(obligation, profile, today, today + timedelta(days=WINDOW_DAYS)):
-                # shifted/original — для строки «срок перенесён с …» в шаблоне deadline.group
                 payload = obligation.payload(why, period) | {"shifted": due != nominal, "original": nominal.isoformat()}
                 stmt = insert(RadarEvent).values(
                     inn=inn, type="deadline", kind="once", key=f"obl:{inn}:{obligation.code}:{nominal}",
@@ -355,8 +315,6 @@ async def materialize_for(inn: str, today: date | None = None) -> tuple[list[str
 
 
 async def registry_loaded(inn: str, msp_record: dict) -> None:
-    """После ввода ИНН или «Обновить» (бот и мини-приложение): снимок МСП — точка отсчёта для
-    sync_msp (и сразу проверка изменений), затем сроки обязанностей."""
     await process_msp(inn, msp_record, today_msk())
     await materialize_for(inn)
 
@@ -369,11 +327,7 @@ async def materialize() -> None:
             logger.exception("materialize failed for %s", inn)
 
 
-# ---- новые законы (pravo.gov.ru, radar/laws.py) ---------------------------------
 async def classify_act(meta: dict) -> laws.Law | None:
-    """Акт с портала → Law. Сначала по названию; не про бизнес — дальше не смотрим. Иначе берём
-    текст из «Актуальных редакций» (дата вступления в силу, изменяемые акты), а если из названия
-    не понять, что меняется, — ещё и ищем изменяемый акт по номеру. None — ждём текст до завтра."""
     law = laws.classify(meta, [], None)
     if law is not None and not law.topics:
         return law
@@ -388,9 +342,6 @@ async def classify_act(meta: dict) -> laws.Law | None:
 
 
 async def ingest_laws(today: date | None = None, days: int = LAW_LOOKBACK_DAYS, notify: bool = True) -> int:
-    """Акты за последние days дней → таблица laws → события компаниям, которых они касаются.
-    Уже разобранные пропускаем; «О внесении изменений…» без текста перепроверяем на следующий день.
-    Возвращает число новых актов про бизнес."""
     today = today or today_msk()
     since = today - timedelta(days=days)
     async with SessionLocal() as db:
@@ -400,7 +351,7 @@ async def ingest_laws(today: date | None = None, days: int = LAW_LOOKBACK_DAYS, 
         day = since + timedelta(days=offset)
         try:
             metas = await asyncio.to_thread(pravo_client.published, day)
-        except Exception:  # портал не ответил — этот день перепроверим завтра
+        except Exception:
             logger.exception("pravo.gov.ru list for %s failed", day)
             continue
         for meta in metas:
@@ -430,7 +381,6 @@ async def ingest_laws(today: date | None = None, days: int = LAW_LOOKBACK_DAYS, 
 
 
 async def laws_report(days: int = 7) -> str:
-    """/laws (при DEBUG): что лента отобрала за неделю и по какой теме — чтобы проверить глазами."""
     since = today_msk() - timedelta(days=days)
     async with SessionLocal() as db:
         total = await db.scalar(select(func.count()).select_from(LawRecord).where(LawRecord.published >= since))
@@ -458,7 +408,6 @@ async def recent_laws(today: date) -> list[laws.Law]:
 
 
 async def fan_out_laws(inns: list[str], items: list[laws.Law], today: date) -> list[RadarEvent]:
-    """Акты × компании → «вышел акт» или вопрос о признаке; новые — сразу в очередь (alert)."""
     created = []
     for inn in inns:
         async with SessionLocal() as db:
@@ -472,8 +421,6 @@ async def fan_out_laws(inns: list[str], items: list[laws.Law], today: date) -> l
 
 
 async def start_laws() -> None:
-    """При старте бота. Пустая таблица — загрузить акты за LAW_RECENT_DAYS дней без рассылки
-    (иначе после первого деплоя всем пришёл бы месяц законов разом); иначе — догнать 07:00."""
     async with SessionLocal() as db:
         empty = (await db.execute(select(LawRecord.eo_number).limit(1))).first() is None
     if empty:
@@ -483,15 +430,13 @@ async def start_laws() -> None:
 
 
 async def answer_flag(max_user_id: int, flag: str, yes: bool) -> str:
-    """Ответ на вопрос о признаке (касса, маркировка…): запоминаем его для компании и, если «да»,
-    присылаем акты за LAW_RECENT_DAYS дней, которые ждали этого ответа."""
     async with SessionLocal() as db:
         user = (await db.execute(select(User).where(User.max_user_id == max_user_id))).scalar_one_or_none()
         business = await current_business(db, user.id) if user else None
         if business is None or flag not in laws.FLAGS:
             return "Сначала пришлите ИНН"
         profile = await db.get(BusinessProfile, business.inn) or BusinessProfile(inn=business.inn, flags={}, bank_biks=[])
-        profile.flags = {**(profile.flags or {}), flag: yes}  # новый dict — иначе JSONB не сохранится
+        profile.flags = {**(profile.flags or {}), flag: yes}
         db.add(profile)
         await db.execute(update(RadarEvent).where(RadarEvent.inn == business.inn, RadarEvent.key == f"q:{business.inn}:{flag}")
                          .values(status="done"))
@@ -505,13 +450,12 @@ async def answer_flag(max_user_id: int, flag: str, yes: bool) -> str:
     return "Запомнили — присылаем, что вышло" if sent else "Запомнили — пришлём, когда выйдет"
 
 
-@functools.lru_cache(maxsize=4)  # один акт обычно уходит нескольким пользователям подряд
+@functools.lru_cache(maxsize=4)
 def _law_pdf(eo_number: str) -> bytes:
     return pravo_client.pdf(eo_number)
 
 
 async def send_law_pdf(max_user_id: int, payload: dict) -> None:
-    """Официальный текст акта — файлом вслед за сообщением. Большой скан — только ссылкой «Источник»."""
     if (payload.get("pdf_size") or 0) > PDF_LIMIT:
         return
     content = await asyncio.to_thread(_law_pdf, payload["eo"])
@@ -520,7 +464,6 @@ async def send_law_pdf(max_user_id: int, payload: dict) -> None:
                            attachments=[InputMediaBuffer(content, filename=filename)])
 
 
-# ---- напоминания ----------------------------------------------------------------
 def template_of(event: RadarEvent) -> str:
     return "deadline.group" if event.type == "deadline" else event.type
 
@@ -535,8 +478,6 @@ async def _queue(db: AsyncSession, user_id: int, event: RadarEvent, label: str, 
 
 
 async def queue_reminders(now: datetime | None = None) -> None:
-    """Раз в день: для каждого открытого срока и каждого пользователя компании — напоминание,
-    если сегодня день из его настройки remind или срок уже прошёл."""
     now = now or datetime.now(timezone.utc)
     today = now.astimezone(MSK).date()
     async with SessionLocal() as db:
@@ -545,14 +486,12 @@ async def queue_reminders(now: datetime | None = None) -> None:
             .join(UserBusiness, UserBusiness.inn == RadarEvent.inn)
             .join(User, User.id == UserBusiness.user_id)
             .where(RadarEvent.due.is_not(None), RadarEvent.status == "open", User.is_active,
-                   # о новом событии реестра сегодня уже ушёл alert — напоминания начинаются с завтра
                    or_(RadarEvent.type == "deadline", RadarEvent.first_seen_at < datetime.combine(today, time(), MSK)))
         )
         for event, user in rows.all():
             label = reminder_label(event.due, today, NotificationSettings.of(user.notification_settings))
             if label:
                 await _queue(db, user.id, event, label, now)
-        # состояния без срока (исключение из МСП, ликвидация, дисквалификация) — раз в repeat_days, пока открыты
         rows = await db.execute(
             select(RadarEvent, User)
             .join(UserBusiness, UserBusiness.inn == RadarEvent.inn)
@@ -568,15 +507,12 @@ async def queue_reminders(now: datetime | None = None) -> None:
         await db.commit()
 
 
-AWAIT_HOURS = 24  # сутки без ответа — присылаем следующее: иначе важное навсегда застрянет за неотвеченным
+AWAIT_HOURS = 24
 
-_dispatching = asyncio.Lock()  # dispatch зовут планировщик, кнопки и демо-команды — не отправлять дважды
+_dispatching = asyncio.Lock()
 
 
 async def dispatch() -> None:
-    """Outbox → MAX, по одному сообщению на пользователя: следующее — после ответа на предыдущее
-    (кнопка под ним, см. answered) или через AWAIT_HOURS. Сроки одной компании на одну дату — одним
-    сообщением (шаблон deadline.group); из нескольких напоминаний об одной задаче — только новое."""
     async with _dispatching:
         await _dispatch(datetime.now(timezone.utc))
 
@@ -591,12 +527,12 @@ async def _dispatch(now: datetime) -> None:
             .order_by(Notification.id)
         )).all()
         newest = {(n.user_id, e.id): n.id for n, _, e in rows if e is not None}
-        queues: dict[int, dict[tuple, list]] = defaultdict(dict)  # пользователь → группы по порядку
+        queues: dict[int, dict[tuple, list]] = defaultdict(dict)
         for notification, user, event in rows:
             settings = NotificationSettings.of(user.notification_settings)
             stale = event is not None and (event.status != "open" or newest[(user.id, event.id)] != notification.id)
             if stale or not settings.chat:
-                notification.status = "cancelled"  # задача закрыта, есть напоминание новее или чат выключен
+                notification.status = "cancelled"
             elif notification.label.startswith("demo") or not settings.is_quiet(now):
                 key = ((event.inn, event.due) if notification.template == "deadline.group"
                        else (notification.id,))
@@ -605,8 +541,7 @@ async def _dispatch(now: datetime) -> None:
         for groups in queues.values():
             user = next(iter(groups.values()))[0][1]
             if user.awaiting_mid and user.awaiting_since and now - user.awaiting_since < timedelta(hours=AWAIT_HOURS):
-                continue  # ждём ответа на прошлое сообщение
-            # сначала критичное (🔴), дальше — по очереди
+                continue
             ordered = sorted(groups.values(), key=lambda items: (not _critical(items[0][2]), items[0][0].id))
             await _send(db, ordered[0], now, waiting=len(ordered) - 1)
             await db.commit()
@@ -620,7 +555,7 @@ async def _send(db: AsyncSession, items: list[tuple[Notification, User, RadarEve
                 waiting: int = 0) -> None:
     first, user, event = items[0]
     try:
-        if event is None:  # готовый текст: карточка тура /demo
+        if event is None:
             text, kb = first.text, first.keyboard
         else:
             text, kb = await _render(db, items, now)
@@ -635,7 +570,7 @@ async def _send(db: AsyncSession, items: list[tuple[Notification, User, RadarEve
             notification.attempts += 1
             notification.error = str(exc)[:500]
             notification.status = "failed" if notification.attempts >= 3 or unreachable else "pending"
-        if unreachable:  # заблокировал бота или удалил чат: не пишем, пока сам не вернётся (/start, мини-приложение)
+        if unreachable:
             user.is_active = False
             await db.execute(update(Notification).where(Notification.user_id == user.id, Notification.status == "pending")
                              .values(status="cancelled"))
@@ -645,7 +580,6 @@ async def _send(db: AsyncSession, items: list[tuple[Notification, User, RadarEve
         if e is not None:
             e.last_notified_at = now
     user.awaiting_mid, user.awaiting_since = message_id, now
-    # PDF — с первым сообщением об акте; в напоминаниях о вступлении в силу его уже не повторяем
     if event is not None and event.type == "law.upcoming" and (first.label == "alert" or first.label.startswith("demo")):
         try:
             await send_law_pdf(user.max_user_id, event.payload)
@@ -665,14 +599,13 @@ async def _render(db: AsyncSession, items: list[tuple[Notification, User, RadarE
         ctx = build_context("deadline", {}, company, today, items=payloads, due=event.due)
     else:
         ctx = build_context(event.type, event.payload, company, today, src=event.source)
-    text = render("push." + first.template, ctx)  # коротко; подробности — на экране события в приложении
+    text = render("push." + first.template, ctx)
     if event.type == "profile.question":
         return text, flag_keyboard(event.payload["flag"])
     return text, keyboard([e.id for e in events], app=await bot_app())
 
 
 async def queue_text(user_id: int, text: str, kb: dict, label: str) -> None:
-    """Сообщение без события — в общую очередь, за уже стоящими (карточка шага /demo идёт после его сообщений)."""
     async with SessionLocal() as db:
         db.add(Notification(user_id=user_id, template="text", label=label, text=text, keyboard=kb,
                             dedup_key=f"text:{user_id}:{label}", scheduled_at=datetime.now(timezone.utc)))
@@ -681,7 +614,6 @@ async def queue_text(user_id: int, text: str, kb: dict, label: str) -> None:
 
 
 async def hold(max_user_id: int, message_id: str | None) -> None:
-    """Бот сам (не из очереди) задал вопрос с кнопками — очередь ждёт ответа на него."""
     async with SessionLocal() as db:
         await db.execute(update(User).where(User.max_user_id == max_user_id)
                          .values(awaiting_mid=message_id, awaiting_since=datetime.now(timezone.utc)))
@@ -689,12 +621,10 @@ async def hold(max_user_id: int, message_id: str | None) -> None:
 
 
 async def answered(max_user_id: int, message_id: str | None, release: bool = True) -> None:
-    """Нажата кнопка под сообщением: убрать его из чата и, если его ждала очередь, прислать следующее.
-    release=False — бот сразу задаст следующий вопрос сам (онбординг, шаг /demo)."""
     if message_id:
         try:
             await bot.delete_message(message_id)
-        except Exception:  # удалить не вышло (старое или уже удалено) — очередь всё равно освобождаем
+        except Exception:
             logger.warning("could not delete message %s", message_id, exc_info=True)
         async with SessionLocal() as db:
             await db.execute(update(User).where(User.max_user_id == max_user_id, User.awaiting_mid == message_id)
@@ -704,9 +634,7 @@ async def answered(max_user_id: int, message_id: str | None, release: bool = Tru
         await dispatch()
 
 
-# ---- кнопки и документы (вызывает бот и API) -------------------------------------
 async def user_events(db: AsyncSession, max_user_id: int, ids: list[int]) -> tuple[User | None, list[RadarEvent]]:
-    """События, к компаниям которых у пользователя есть доступ."""
     user = (await db.execute(select(User).where(User.max_user_id == max_user_id))).scalar_one_or_none()
     if user is None:
         return None, []
@@ -718,8 +646,6 @@ async def user_events(db: AsyncSession, max_user_id: int, ids: list[int]) -> tup
 
 
 async def apply_action(max_user_id: int, ids: list[int], action: str) -> str:
-    """Кнопки под пушем: list | done | mute (и snooze1d у старых сообщений с «Завтра»). Возвращает
-    текст всплывающего ответа."""
     async with SessionLocal() as db:
         user, events = await user_events(db, max_user_id, ids)
         if not events:
@@ -740,7 +666,6 @@ async def apply_action(max_user_id: int, ids: list[int], action: str) -> str:
             if action != "done":
                 answer = "Больше не напомним"
             elif all(event.kind == "condition" for event in events):
-                # состояние закрывает только реестр: при следующей сверке проверим, что записи нет
                 answer = "Проверим по реестру: если запись останется, напомним"
             else:
                 answer = "Отмечено как выполненное"
@@ -749,8 +674,6 @@ async def apply_action(max_user_id: int, ids: list[int], action: str) -> str:
 
 
 async def handled_in_app(max_user_id: int, event_id: int) -> None:
-    """Задачу закрыли или взяли в список дел в мини-приложении — убрать пуш о ней из чата и прислать
-    следующее. Пуш о нескольких сроках одной даты остаётся, пока открыт хоть один из них."""
     async with SessionLocal() as db:
         user = (await db.execute(select(User).where(User.max_user_id == max_user_id))).scalar_one_or_none()
         if user is None:
@@ -772,7 +695,6 @@ async def handled_in_app(max_user_id: int, event_id: int) -> None:
 
 
 async def send_document(db: AsyncSession, event: RadarEvent, max_user_id: int) -> None:
-    """Черновик документа к сроку — файлом в чат с ботом."""
     filename, content = documents.build(event.payload, event.due, await documents.requisites(db, event.inn))
     await bot.send_message(
         user_id=max_user_id,
@@ -781,8 +703,6 @@ async def send_document(db: AsyncSession, event: RadarEvent, max_user_id: int) -
     )
 
 
-# ---- демо-триггеры (/demo_remind, /demo_event в боте, только при DEBUG) ----------------
-# Открытого API ЕРКНМ по ИНН нет — на защите проверку показываем имитацией
 DEMO_INSPECTION = {
     "classification": "КНМ", "type_name": "Плановое КНМ", "authority": "Роспотребнадзор",
     "kind": "выездную проверку", "control": "Федеральный государственный санитарно-эпидемиологический контроль (надзор)",
@@ -793,7 +713,6 @@ DEMO_INSPECTION = {
 }
 
 async def demo_remind(max_user_id: int) -> int:
-    """Три ближайших открытых срока текущей компании — напоминанием прямо сейчас."""
     now = datetime.now(timezone.utc)
     async with SessionLocal() as db:
         user = (await db.execute(select(User).where(User.max_user_id == max_user_id))).scalar_one_or_none()
@@ -813,7 +732,6 @@ async def demo_remind(max_user_id: int) -> int:
 
 
 async def demo_event(max_user_id: int, kind: str) -> str:
-    """Имитация внешнего события: knm — проверка в ЕРКНМ, msp_excluded — исключение из реестра МСП."""
     today = today_msk()
     async with SessionLocal() as db:
         user = (await db.execute(select(User).where(User.max_user_id == max_user_id))).scalar_one_or_none()
@@ -844,8 +762,6 @@ async def demo_event(max_user_id: int, kind: str) -> str:
 
 
 async def demo_law(max_user_id: int) -> str:
-    """Акты за LAW_RECENT_DAYS дней, которые касаются текущей компании, — сразу в чат. Настоящие
-    данные портала, не имитация; уже присланный акт второй раз не придёт (ключ law:<номер>:<ИНН>)."""
     async with SessionLocal() as db:
         user = (await db.execute(select(User).where(User.max_user_id == max_user_id))).scalar_one_or_none()
         business = await current_business(db, user.id) if user else None

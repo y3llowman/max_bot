@@ -15,7 +15,6 @@ import { openLink } from "../max/bridge";
 import { useSession } from "../session";
 import s from "./Profile.module.css";
 
-/** «Чат, push» — сводка включённых каналов для строки «Уведомления». */
 export function channelsSummary(n: NotificationSettings): string {
   const parts = [n.chat && "чат", n.push && "push", n.email && "почта"].filter(Boolean) as string[];
   if (parts.length === 0) return "Выключены";
@@ -23,7 +22,6 @@ export function channelsSummary(n: NotificationSettings): string {
   return text[0].toUpperCase() + text.slice(1);
 }
 
-/** 06 · Профиль. */
 export function Profile() {
   const { company, setCompany } = useSession();
   const pref = useThemePref();

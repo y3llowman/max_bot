@@ -1,7 +1,3 @@
-"""Каталог обязанностей и правила напоминаний — без БД.
-
-Запуск из корня репозитория: python -m unittest discover -s tests
-"""
 import sys
 import unittest
 from datetime import date, datetime
@@ -9,9 +5,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from notifications.planner import MSK, NotificationSettings, reminder_label  # noqa: E402
-from radar.deadlines import Profile  # noqa: E402
-from radar.obligations import BY_CODE, OBLIGATIONS, due_dates, next_workday  # noqa: E402
+from notifications.planner import MSK, NotificationSettings, reminder_label
+from radar.deadlines import Profile
+from radar.obligations import BY_CODE, OBLIGATIONS, due_dates, next_workday
 
 TODAY = date(2026, 9, 26)
 YEAR_AHEAD = date(2027, 9, 26)
@@ -27,12 +23,11 @@ def dues(code: str, p: Profile) -> list[tuple[date, date, str]]:
 
 class WorkdayTest(unittest.TestCase):
     def test_weekend_moves_to_monday(self):
-        self.assertEqual(next_workday(date(2026, 3, 28)), date(2026, 3, 30))  # суббота
+        self.assertEqual(next_workday(date(2026, 3, 28)), date(2026, 3, 30))
 
     def test_new_year_holidays_and_decree(self):
-        self.assertEqual(next_workday(date(2026, 1, 3)), date(2026, 1, 12))   # 9 января — перенос
-        self.assertEqual(next_workday(date(2026, 12, 31)), date(2027, 1, 11))  # 31 декабря — перенос
-        # 2027, постановление № 1187: 20.02 (сб) — рабочий, 22.02 и 5.11 — выходные, 1 и 9 мая, 12 июня — на пн
+        self.assertEqual(next_workday(date(2026, 1, 3)), date(2026, 1, 12))
+        self.assertEqual(next_workday(date(2026, 12, 31)), date(2027, 1, 11))
         self.assertEqual(next_workday(date(2027, 2, 20)), date(2027, 2, 20))
         self.assertEqual(next_workday(date(2027, 2, 21)), date(2027, 2, 24))
         self.assertEqual(next_workday(date(2027, 5, 1)), date(2027, 5, 4))
@@ -41,7 +36,7 @@ class WorkdayTest(unittest.TestCase):
         self.assertEqual(next_workday(date(2027, 11, 4)), date(2027, 11, 8))
 
     def test_holiday_on_weekend_gives_extra_day_off(self):
-        self.assertEqual(next_workday(date(2026, 5, 9)), date(2026, 5, 12))   # 9 мая — суббота → 11 мая выходной
+        self.assertEqual(next_workday(date(2026, 5, 9)), date(2026, 5, 12))
 
     def test_workday_is_kept(self):
         self.assertEqual(next_workday(date(2026, 10, 26)), date(2026, 10, 26))
@@ -64,7 +59,6 @@ class ApplicabilityTest(unittest.TestCase):
         self.assertEqual(applicable(Profile(inn="500100732259", is_legal_entity=False, tax_regime="ausn")), {"ausn_pay"})
 
     def test_ausn_employer_reports_only_service_history(self):
-        """На АУСН НДФЛ за сотрудников платит банк, РСВ, 6-НДФЛ и персонифицированные сведения не сдаются."""
         codes = applicable(Profile(inn="7701234567", is_legal_entity=True, tax_regime="ausn", has_employees=True, headcount=3))
         self.assertEqual(codes, {"ausn_pay", "efs1_ausn", "buh"})
 
@@ -86,10 +80,10 @@ class ApplicabilityTest(unittest.TestCase):
         year = Profile(inn="500100732259", is_legal_entity=False, tax_regime="psn",
                        patent_from=date(2027, 1, 1), patent_to=date(2027, 12, 31))
         self.assertEqual([(n, p) for _, n, p in dues("patent_pay", year)],
-                         [(date(2027, 3, 31), "Патент 01.01.2027–31.12.2027: треть суммы")])  # 28.12 — за окном
+                         [(date(2027, 3, 31), "Патент 01.01.2027–31.12.2027: треть суммы")])
         short = Profile(inn="500100732259", is_legal_entity=False, tax_regime="psn",
                         patent_from=date(2026, 10, 1), patent_to=date(2027, 3, 31))
-        self.assertEqual([n for _, n, _ in dues("patent_pay", short)], [date(2027, 3, 31)])  # 6 месяцев — одним платежом
+        self.assertEqual([n for _, n, _ in dues("patent_pay", short)], [date(2027, 3, 31)])
         unknown = Profile(inn="500100732259", is_legal_entity=False, tax_regime="psn")
         self.assertIsNone(BY_CODE["patent_pay"].applies(unknown), "без срока патента дат оплаты не посчитать")
 
@@ -116,7 +110,7 @@ class DueDatesTest(unittest.TestCase):
     def test_rsv_quarters(self):
         p = Profile(inn="7701234567", is_legal_entity=True, has_employees=True)
         self.assertEqual([(due, period) for due, _, period in dues("rsv", p)], [
-            (date(2026, 10, 26), "За 9 месяцев 2026"),  # 25.10.2026 — воскресенье
+            (date(2026, 10, 26), "За 9 месяцев 2026"),
             (date(2027, 1, 25), "За 2026 год"),
             (date(2027, 4, 26), "За I квартал 2027"),
             (date(2027, 7, 26), "За полугодие 2027"),
@@ -130,7 +124,7 @@ class DueDatesTest(unittest.TestCase):
 
 class ReminderTest(unittest.TestCase):
     def test_labels_follow_settings(self):
-        s = NotificationSettings()  # по умолчанию d30-7-1
+        s = NotificationSettings()
         self.assertEqual(reminder_label(date(2026, 10, 26), TODAY, s), "T-30")
         self.assertIsNone(reminder_label(date(2026, 10, 20), TODAY, s))
         self.assertEqual(reminder_label(TODAY, TODAY, s), "T-0")

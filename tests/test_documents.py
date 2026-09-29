@@ -1,8 +1,3 @@
-"""Черновики документов — без БД: у каждой обязанности есть документ, он собирается,
-коды периодов и реквизиты ЕНП на месте.
-
-Запуск из корня репозитория: python -m unittest discover -s tests
-"""
 import io
 import os
 import sys
@@ -11,17 +6,15 @@ from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
-# radar.documents импортирует databases, а движок создаётся при импорте: адрес тестовой БД
-# нужно выставить раньше, иначе при общем запуске сломаются тесты test_radar_db
 if os.environ.get("TEST_DATABASE_URL"):
     os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
 os.environ.setdefault("MAX_TOKEN", "test")
 
-from docx import Document  # noqa: E402
+from docx import Document
 
-from radar import documents  # noqa: E402
-from radar.deadlines import Profile  # noqa: E402
-from radar.obligations import BY_CODE, OBLIGATIONS, due_dates  # noqa: E402
+from radar import documents
+from radar.deadlines import Profile
+from radar.obligations import BY_CODE, OBLIGATIONS, due_dates
 
 LE = {"name": "ООО «Тест»", "inn": "7743212897", "kpp": "774301001", "ogrn": "1177746000000",
       "address": "г. Москва", "director_position": "Генеральный директор",
@@ -53,7 +46,6 @@ class EveryObligationHasDocument(unittest.TestCase):
                 self.assertIn(o.code, documents.REPORTS)
 
     def test_every_real_deadline_builds(self):
-        """Все сроки на год вперёд для разных профилей собираются в .docx без ошибок."""
         profiles = [
             (Profile(inn=LE["inn"], is_legal_entity=True, tax_regime="osno", has_employees=True, headcount=40), LE),
             (Profile(inn=LE["inn"], is_legal_entity=True, tax_regime="usn_income", has_employees=True, headcount=5), LE),
@@ -81,7 +73,6 @@ class EnpPayment(unittest.TestCase):
         for value in ("18201061201010000510", "03100643000000018500", "40102810445370000059",
                       "017003983", "7727406020", "770701001", LE["inn"]):
             self.assertIn(value, cells)
-        # КПП плательщика — «0» с 01.04.2026, а не КПП компании
         self.assertEqual(cells[cells.index("КПП плательщика") + 1], "0")
         self.assertNotIn(LE["kpp"], cells)
 
@@ -119,7 +110,6 @@ class ReportPeriods(unittest.TestCase):
         self.assertEqual(self.period("efs1", date(2026, 10, 26)), (None, None))
 
     def test_nominal_date_wins_over_shifted_due(self):
-        """Срок 25.04 перенесли на понедельник — код периода остаётся «21», а не сбивается."""
         p = payload("rsv", date(2027, 4, 25))
         self.assertEqual(documents.report_period("rsv", p, date(2027, 4, 26)), ("21", 2027))
 
@@ -135,7 +125,7 @@ class ReportBrief(unittest.TestCase):
         self.assertIn(LE["kpp"], cells)
         self.assertIn("Книга продаж", text)
         self.assertIn("памятка, а не бланк", text)
-        self.assertNotIn("Подготовить документ", text)   # шаг-ссылка на кнопку не попадает в памятку
+        self.assertNotIn("Подготовить документ", text)
 
     def test_ip_has_no_kpp_row(self):
         _, content = documents.build(payload("ip_3ndfl", date(2027, 4, 30)), date(2027, 4, 30), IP)

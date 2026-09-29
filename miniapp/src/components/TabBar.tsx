@@ -10,7 +10,6 @@ const TABS: { to: string; label: string; icon: IconName }[] = [
   { to: "/profile", label: "Профиль", icon: "user" },
 ];
 
-/** Таббар — только на экранах верхнего уровня. На Android — индикатор-пилюля (Material), на остальных — iOS-вариант. */
 export function TabBar() {
   const android = platform() === "android";
   const ref = useDockHeight<HTMLElement>();

@@ -28,6 +28,5 @@ async def save_notification_settings(
 
 @router.post("/notifications/seen", status_code=204)
 async def mark_notifications_seen(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Экран «Уведомления» открыт — всё, что бот прислал в чат до этого момента, считается просмотренным."""
     user.notifications_seen_at = datetime.now(timezone.utc)
     await db.commit()

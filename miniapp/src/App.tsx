@@ -9,15 +9,15 @@ import { CalendarScreen } from "./screens/Calendar";
 import { Connect } from "./screens/Connect";
 import { Dashboard } from "./screens/Dashboard";
 import { Feed } from "./screens/Feed";
-import { Launch } from "./screens/Launch";
+import { Launch, deepLinkTarget } from "./screens/Launch";
 import { Notifications } from "./screens/Notifications";
 import { Profile } from "./screens/Profile";
 import { ProfileEdit } from "./screens/ProfileEdit";
 import { Splash } from "./screens/Splash";
 import { TaskScreen } from "./screens/Task";
 import { SessionProvider, useSession } from "./session";
+import { onRelaunch } from "./max/bridge";
 
-/** Экраны разделов и вложенные ждут компанию; без неё — на подключение. */
 function RequireSession({ children }: { children: ReactNode }) {
   const { status, reload } = useSession();
   if (status === "loading") return <Splash />;
@@ -27,7 +27,6 @@ function RequireSession({ children }: { children: ReactNode }) {
   return children;
 }
 
-/** Верхний уровень: крестик в шапке MAX и таббар. */
 function TabsLayout() {
   return (
     <RequireSession>
@@ -39,7 +38,6 @@ function TabsLayout() {
   );
 }
 
-/** Сбой при отрисовке экрана — вместо служебной страницы react-router. */
 function RouteError() {
   return (
     <Screen title={APP_NAME}>
@@ -58,7 +56,6 @@ function RouteError() {
   );
 }
 
-// Хеш-роутинг: статический хостинг не нужно настраивать на переадресацию путей.
 const router = createHashRouter([
   {
     errorElement: <RouteError />,
@@ -81,6 +78,8 @@ const router = createHashRouter([
     ],
   },
 ]);
+
+onRelaunch((param) => router.navigate(deepLinkTarget(param), { replace: true }));
 
 export function App() {
   return (

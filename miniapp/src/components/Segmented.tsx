@@ -7,7 +7,6 @@ interface Props<T extends string> {
   label: string;
 }
 
-/** Segmented: 48 / r12, подложка surface-2, активный сегмент 40 / r8 с рамкой. */
 export function Segmented<T extends string>({ options, value, onChange, label }: Props<T>) {
   return (
     <div className={s.segmented} role="tablist" aria-label={label}>

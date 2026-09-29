@@ -11,20 +11,16 @@ from jose import JWTError, jwt
 from core.config import MAX_BOT_TOKEN, MAX_INIT_DATA_MAX_AGE, SECRET_KEY
 
 ALGORITHM = "HS256"
-TOKEN_TTL = timedelta(hours=12)  # мини-приложение на 401 заново входит по initData
+TOKEN_TTL = timedelta(hours=12)
 
-# Ключ по умолчанию в публичном репозитории или пустой ключ — это подделка токенов любым желающим
 if len(SECRET_KEY.get_secret_value()) < 32:
     raise RuntimeError("SECRET_KEY не задан или короче 32 символов: `openssl rand -hex 32` → SECRET_KEY=… в .env")
 
 def validate_max_init_data(init_data: str) -> dict:
-    """Validate MAX Mini App initData and return the trusted user object."""
     raw_pairs = parse_qsl(init_data, keep_blank_values=True)
     if not raw_pairs:
         raise HTTPException(status_code=401, detail="Empty initData")
 
-    # MAX requires parameters to be unique; accepting duplicates can create
-    # ambiguities between what is signed and what the application reads.
     keys = [key for key, _ in raw_pairs]
     if len(keys) != len(set(keys)) or keys.count("hash") != 1:
         raise HTTPException(status_code=401, detail="Invalid initData parameters")

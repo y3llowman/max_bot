@@ -1,19 +1,11 @@
-"""Демо-тур /demo: все функции бота по шагам на текущей компании (только при DEBUG=true).
-
-Шаг — настоящие сообщения радара, после них карточка «Шаг N из M»: что показали, что проверить и
-кнопка «Дальше». Всё идёт через общую очередь (worker.dispatch): по одному сообщению, следующее — после
-ответа на предыдущее, отвеченное удаляется. Сроки обязанностей, документы и законы pravo.gov.ru — настоящие. События реестров —
-имитация: черновики строят те же детекторы (radar/detectors.py), что и ночные сверки, но из подставных
-выписок и без записи в registry_snapshots — иначе следующая сверка приняла бы подставу за изменение
-в реестре. У имитаций source="demo" и ключ demo:…, последний шаг удаляет их.
-"""
 from __future__ import annotations
 
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from bot.client import bot_app, send_html
 from databases.businesses_db import Business, current_business
@@ -33,8 +25,8 @@ class Ctx:
     user: User
     business: Business
     today: date
-    stamp: str                                  # уникальная часть ключей и меток этого шага
-    show_profile: Callable[[], Awaitable[None]]  # карточка «Нашли вашу компанию. Всё верно?» (из бота)
+    stamp: str
+    show_profile: Callable[[], Awaitable[None]]
 
     @property
     def inn(self) -> str:
@@ -42,7 +34,6 @@ class Ctx:
 
 
 async def _send(ctx: Ctx, events: list[RadarEvent]) -> int:
-    """События — сразу этому пользователю, в обход тихих часов (метка demo:…, как у /demo_remind)."""
     now = datetime.now(timezone.utc)
     async with SessionLocal() as db:
         for event in events:
@@ -61,7 +52,6 @@ def _d(d: date) -> str:
     return f"{d:%d.%m.%Y}"
 
 
-# ---------------------------------------------------------------- шаги
 async def profile(ctx: Ctx) -> str | None:
     await ctx.show_profile()
     return None
@@ -74,8 +64,6 @@ async def reminders(ctx: Ctx) -> str | None:
 
 
 async def documents(ctx: Ctx) -> str | None:
-    """Ближайший срок с документом — напоминанием; документ готовят из приложения («Открыть»). Остальные
-    виды документов не шлём пачкой файлов: они есть у задач в мини-приложении (перечислены в карточке)."""
     async with SessionLocal() as db:
         events = await db.scalars(
             select(RadarEvent).where(RadarEvent.inn == ctx.inn, RadarEvent.type == "deadline",
@@ -93,7 +81,6 @@ async def documents(ctx: Ctx) -> str | None:
 
 
 async def inspections(ctx: Ctx) -> str | None:
-    """ЕРКНМ: плановая проверка, профилактический визит и предостережение."""
     base = {"inn": ctx.inn, "type_name": None, "warning": None, "stop": None}
     start, visit = ctx.today + timedelta(days=20), ctx.today + timedelta(days=10)
     knms = [
@@ -147,7 +134,6 @@ async def termination(ctx: Ctx) -> str | None:
 
 
 async def egrul_changes(ctx: Ctx) -> str | None:
-    """Новый руководитель-иностранец и новый адрес: два «изменились сведения» и уведомление МВД."""
     prev = {"director": {"surname": "ПЕТРОВА", "name": "АННА", "patronymic": "СЕРГЕЕВНА",
                          "citizenship": "Российская Федерация"},
             "address": "115035, г. Москва, ул. Садовническая, д. 1", "tax_authority_name": "ИФНС России № 5 по г. Москве"}
@@ -159,7 +145,6 @@ async def egrul_changes(ctx: Ctx) -> str | None:
 
 
 async def msp(ctx: Ctx) -> str | None:
-    """Реестр МСП: исключение, выход из микропредприятий (задача на ЛНА) и пропажа из реестра."""
     drafts = det.msp_changes(ctx.inn, None, {"category": 1, "date_excluded": _d(ctx.today)}, ctx.today)
     drafts += det.msp_changes(ctx.inn, {"category": 1}, {"category": 2}, ctx.today)
     drafts += det.msp_changes(ctx.inn, None, None, ctx.today)
@@ -168,7 +153,6 @@ async def msp(ctx: Ctx) -> str | None:
 
 
 async def repeat(ctx: Ctx) -> str | None:
-    """Открытое состояние повторяется раз в repeat_days — показываем повтор исключения из МСП сейчас."""
     async with SessionLocal() as db:
         excluded = (await db.execute(
             select(RadarEvent).where(RadarEvent.inn == ctx.inn, RadarEvent.source == "demo",
@@ -182,8 +166,6 @@ async def repeat(ctx: Ctx) -> str | None:
 
 
 async def pravo(ctx: Ctx) -> str | None:
-    """Настоящие акты pravo.gov.ru за 30 дней для компании, плюс вопрос-признак по первому акту на
-    тему, которой нет в реестрах (спрашиваем, даже если ответ уже есть: «Да» досылает акты)."""
     items = await worker.recent_laws(ctx.today)
     if not items:
         return "Акты pravo.gov.ru ещё загружаются после запуска бота — повторите шаг через несколько минут."
@@ -191,7 +173,7 @@ async def pravo(ctx: Ctx) -> str | None:
         company = await worker.load_profile(db, ctx.inn)
     new = await worker.upsert_events(ctx.inn, "pravo", [d for law in items for d in laws.drafts(law, company, ctx.today)])
     note = None
-    if not any(e.type == "law.upcoming" for e in new):  # всё уже присылали — покажем последний акт ещё раз
+    if not any(e.type == "law.upcoming" for e in new):
         async with SessionLocal() as db:
             last = (await db.execute(
                 select(RadarEvent).where(RadarEvent.inn == ctx.inn, RadarEvent.type == "law.upcoming")
@@ -212,7 +194,6 @@ async def pravo(ctx: Ctx) -> str | None:
 
 
 async def cleanup(inn: str) -> int:
-    """Удалить имитации (source="demo") вместе с их сообщениями в очереди."""
     async with SessionLocal() as db:
         ids = select(RadarEvent.id).where(RadarEvent.inn == inn, RadarEvent.source == "demo")
         await db.execute(delete(Notification).where(Notification.event_id.in_(ids)))
@@ -221,12 +202,11 @@ async def cleanup(inn: str) -> int:
     return removed.rowcount
 
 
-# ---------------------------------------------------------------- тур
 @dataclass(frozen=True)
 class Step:
     title: str
-    run: Callable[[Ctx], Awaitable[str | None]] | None  # None — шаг-инструкция без сообщений бота
-    check: str                                          # что проверить
+    run: Callable[[Ctx], Awaitable[str | None]] | None
+    check: str
 
 
 OPEN = "«Открыть» — подробности в приложении: что это значит, что сделать, источник. "
@@ -258,7 +238,7 @@ STEPS = (
          "предупреждение о захвате компании — в приложении («Открыть»)."),
     Step("Реестр МСП", msp,
          "Исключение из реестра, выход из микропредприятий (задача на ЛНА) и «компании нет в реестре». Событие без "
-         "срока «📋 В список дел» кладёт в раздел «Без срока» на главной."),
+         "срока «📋 В список дел» кладёт в раздел «Список дел» на главной."),
     Step("Повтор и «Сделано» у состояния", repeat,
          "Исключение из МСП пришло ещё раз — так бот повторяет открытое состояние раз в 30 дней. «✅ Сделано» → "
          "«Проверим по реестру: если запись останется, напомним»."),
@@ -269,7 +249,7 @@ STEPS = (
          "Пришлите любой текст или фото — бот ответит подсказкой. /profile — всё о компании и «✏️ Изменить "
          "данные». Другой ИНН в чате — смена компании; ИНН, который подключил другой пользователь, не подключится."),
     Step("Мини-приложение", None,
-         "Главная: «Сегодня», «На неделе», «Без срока» (всё, что вы взяли «В список дел»). Колокольчик — лента: "
+         "Главная: «Сегодня», «На неделе», «Список дел» (что вы взяли «В список дел»). Колокольчик — лента: "
          "всё, о чём писал бот, даже удалённое из чата. Экран события — подробности, «Выполнено» (пуш в чате "
          "исчезнет), «Подготовить документ». Профиль → «Данные компании»: режим, численность, ОКВЭД, регион, "
          "признаки, срок патента; «Сохранить» ведёт на главную."),
@@ -290,13 +270,33 @@ async def context(max_user_id: int, show_profile: Callable[[], Awaitable[None]])
         business = await current_business(db, user.id) if user else None
     if business is None:
         return None
-    # метка demo:<stamp> — в notifications.label (16 символов): время до сотых долей миллисекунды,
-    # чтобы повтор того же события на следующем шаге не совпал с прошлой меткой
     return Ctx(max_user_id, user, business, today_msk(), f"{datetime.now():%H%M%S%f}"[:11], show_profile)
 
 
+_tours: dict[int, str] = {}
+_running: set[int] = set()
+
+
+def running(max_user_id: int) -> bool:
+    return max_user_id in _running
+
+
+async def _drop_queued(max_user_id: int) -> None:
+    async with SessionLocal() as db:
+        await db.execute(
+            update(Notification)
+            .where(Notification.user_id.in_(select(User.id).where(User.max_user_id == max_user_id)),
+                   Notification.status == "pending", Notification.label.like("demo:%"))
+            .values(status="cancelled")
+        )
+        await db.commit()
+
+
 async def intro(max_user_id: int) -> str | None:
-    """Ответ на /demo: список шагов и «Начать». Возвращает id сообщения — очередь ждёт ответа на него."""
+    tour = uuid.uuid4().hex[:8]
+    _tours[max_user_id] = tour
+    _running.discard(max_user_id)
+    await _drop_queued(max_user_id)
     steps = "\n".join(f"{i}. {s.title}" for i, s in enumerate(STEPS, start=1))
     return await send_html(max_user_id,
                     f"🎬 <b>Демо всех функций: {len(STEPS)} шагов</b>\n\n{steps}\n\n"
@@ -304,27 +304,38 @@ async def intro(max_user_id: int) -> str | None:
                     "проверить. Сообщения идут по одному: следующее — после ответа на предыдущее, отвеченное "
                     "удаляется. События реестров — имитация (в приложении помечены «Имитация для демо»), в конце их можно "
                     "убрать. Сроки, документы и законы — настоящие.",
-                    _kb([[_callback("▶ Начать", "demo:1")]]))
+                    _kb([[_callback("▶ Начать", f"demo:{tour}:1")]]))
 
 
 async def run(max_user_id: int, arg: str, show_profile: Callable[[], Awaitable[None]]) -> None:
-    """Кнопки тура: demo:<номер шага> | demo:stop | demo:clean."""
     ctx = await context(max_user_id, show_profile)
     if ctx is None:
         await send_html(max_user_id, "Сначала подключите компанию: пришлите ИНН (например, 7743212897), "
                                      "ответьте на вопросы и снова /demo.")
         return
     if arg in ("clean", "stop"):
+        _running.discard(max_user_id)
         if arg == "clean":
             removed = await cleanup(ctx.inn)
             await send_html(max_user_id, f"🧹 Убрали демо-события: {removed}. Сроки, документы и законы остались. "
                                          "/demo — пройти ещё раз.")
-        else:  # кнопку «Убрать» очередь не ждёт: она необязательная
+        else:
+            await _drop_queued(max_user_id)
             await send_html(max_user_id, "Демо остановлено. /demo — начать заново.",
                             _kb([[_callback("🧹 Убрать демо-события", "demo:clean")]]))
-        await worker.dispatch()  # тур закончился — отпускаем очередь радара
+        await worker.dispatch()
         return
-    n = int(arg)
+    tour, _, number = arg.rpartition(":")
+    if _tours.setdefault(max_user_id, tour) != tour or not number.isdigit():
+        await send_html(max_user_id, "Это кнопка прошлого демо — оно уже не идёт. Продолжайте текущее или "
+                                     "начните заново: /demo.")
+        await worker.dispatch()
+        return
+    n = int(number)
+    if n < len(STEPS):
+        _running.add(max_user_id)
+    else:
+        _running.discard(max_user_id)
     step = STEPS[n - 1]
     note = await step.run(ctx) if step.run else None
     text = f"☝️ <b>Шаг {n} из {len(STEPS)} · {step.title}</b>\n\n<b>Что проверить.</b> {step.check}"
@@ -334,9 +345,9 @@ async def run(max_user_id: int, arg: str, show_profile: Callable[[], Awaitable[N
     if step.title == "Мини-приложение":
         rows.append([{"type": "open_app", "text": "Открыть мини-приложение", **await bot_app()}])
     if n < len(STEPS):
-        rows.append([_callback(f"▶ Дальше: {STEPS[n].title}"[:64], f"demo:{n + 1}"), _callback("⏹ Стоп", "demo:stop")])
+        rows.append([_callback(f"▶ Дальше: {STEPS[n].title}"[:64], f"demo:{tour}:{n + 1}"),
+                     _callback("⏹ Стоп", "demo:stop")])
     else:
         text += "\n\n✅ Демо пройдено. Имитации реестров остались в ленте и мини-приложении — уберите их кнопкой."
         rows.append([_callback("🧹 Убрать демо-события", "demo:clean")])
-    # карточка — в общую очередь за сообщениями шага: придёт, когда на них ответят
     await worker.queue_text(ctx.user.id, text, _kb(rows), f"demo:{ctx.stamp}")

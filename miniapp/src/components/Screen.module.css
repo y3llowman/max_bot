@@ -5,7 +5,6 @@
   min-height: 0;
 }
 
-/* Контент начинается в 8px под шапкой MAX, поля 20 — как в макетах (y=128 при шапке до 120). */
 .content {
   display: flex;
   flex-direction: column;

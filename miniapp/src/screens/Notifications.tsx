@@ -25,7 +25,6 @@ const REMIND: { value: RemindMode; label: string }[] = [
 
 const range = (r: string) => r.replace("–", " – ");
 
-/** 07 · Настройки уведомлений (Профиль → «Уведомления»). */
 export function Notifications() {
   const { data, error, loading, reload } = useAsync(() => api.notifications(), []);
   const [draft, setDraft] = useState<NotificationSettings | null>(null);
@@ -51,7 +50,7 @@ export function Notifications() {
       toast({ text: "Не получилось сохранить — попробуйте ещё раз", icon: "alert-circle" });
       return;
     }
-    navigate("/tasks");  // сохранили — на главную
+    navigate("/tasks");
     toast({
       text: "Настройки сохранены",
       action: {
@@ -114,7 +113,6 @@ export function Notifications() {
               onClick={() => set("chat", !draft.chat)}
               trail={<Toggle checked={draft.chat} />}
             />
-            {/* другие каналы бот пока не отправляет — не обещаем то, чего нет */}
             <ListCell title="Push-уведомления" caption="Скоро" role="switch" checked={false} onClick={() => undefined} disabled trail={<Toggle checked={false} />} />
             <ListCell title="Электронная почта" caption="Скоро" role="switch" checked={false} onClick={() => undefined} disabled trail={<Toggle checked={false} />} />
           </ListGroup>

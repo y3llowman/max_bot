@@ -4,7 +4,6 @@ import s from "./SectionHeader.module.css";
 interface Props {
   title: string;
   count?: number;
-  /** Дополнение справа от заголовка — например, чип «Сегодня». */
   children?: ReactNode;
 }
 

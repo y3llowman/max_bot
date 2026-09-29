@@ -1,7 +1,3 @@
-// Моковые данные — те же, что на макетах: «сегодня» 22 июля 2026, компания
-// «Северный ветер». Работают, пока не задан VITE_API_URL.
-// Демо-сценарии: ИНН 0000000000 — «компания не найдена»; ?state=loading|empty|error
-// в адресе — состояния загрузки, пустого экрана и ошибки из макетов.
 import { config } from "../utils/config";
 import { load, save } from "../utils/storage";
 import type {
@@ -47,7 +43,6 @@ const tasks: Task[] = [
   { id: "vat-2026-q2", title: "Декларация по НДС", subtitle: "За II квартал 2026", status: "soon", due: "2026-07-27" },
   { id: "enp-2607", title: "Уплата ЕНП", subtitle: "Налоги и взносы · 184 320 ₽", status: "planned", due: "2026-07-28" },
   { id: "ndfl-notice-2208", title: "Уведомление по НДФЛ", subtitle: "23.07–22.08 · КНД 1110355", status: "planned", due: "2026-08-25" },
-  // выполненные
   { id: "usn-advance-h1", title: "Аванс по УСН", subtitle: "За полугодие · 96 400 ₽", status: "done", due: "2026-07-15" },
   { id: "sfr-personal-06", title: "Персонифицированные сведения", subtitle: "За июнь · СФР", status: "done", due: "2026-07-10" },
   { id: "ndfl-pay-0630", title: "Уплата НДФЛ", subtitle: "23.06–30.06 · 18 400 ₽", status: "done", due: "2026-07-03" },
@@ -60,12 +55,10 @@ const tasks: Task[] = [
   { id: "enp-2605", title: "Уплата ЕНП", subtitle: "Налоги и взносы · 168 300 ₽", status: "done", due: "2026-05-28" },
   { id: "ndfl-notice-2205", title: "Уведомление по НДФЛ", subtitle: "23.04–22.05 · КНД 1110355", status: "done", due: "2026-05-25" },
   { id: "sfr-personal-04", title: "Персонифицированные сведения", subtitle: "За апрель · СФР", status: "done", due: "2026-05-12" },
-  // без срока: на главной — только после «В список дел»
   { id: "msp-not-found", title: "Компании нет в реестре МСП", subtitle: "Реестр МСП", status: "planned" },
   { id: "law-kkt-400", title: "Федеральный закон от 24.07.2026 № 400-ФЗ", subtitle: "О применении контрольно-кассовой техники", status: "planned" },
 ];
 
-// «В список дел», сделанные в этой сессии; msp-not-found — уже в списке, чтобы был виден раздел «Без срока»
 const listed = new Set<string>(["msp-not-found"]);
 
 const feedItems: FeedItem[] = [
@@ -163,7 +156,6 @@ function genericSections(task: Task): TaskSection[] {
   ];
 }
 
-// Отметки «Уже подано», сделанные в этой сессии.
 const submitted = new Set<string>();
 let notifications: NotificationSettings = {
   chat: true, push: true, email: false, emailAddress: "buh@severveter.ru",
@@ -197,7 +189,6 @@ function ok<T>(value: T): Promise<T> {
 
 const SESSION_KEY = "mock-session";
 
-/** «Сейчас» в мок-мире: дата из макетов, время текущее — чтобы подписи были «сегодня в 14:03». */
 function mockNow(): string {
   const now = new Date();
   const p = (n: number) => String(n).padStart(2, "0");
@@ -232,7 +223,9 @@ export const mockApi: Api = {
           soon: all.filter((t) => t.status === "soon").length,
           done: all.filter((t) => t.status === "done").length,
         },
-        tasks: all.filter((t) => t.status !== "done" && (t.due || listed.has(t.id))),
+        tasks: all
+          .filter((t) => t.status !== "done" && (t.due || listed.has(t.id)))
+          .map((t) => ({ ...t, listed: listed.has(t.id) })),
         nextDue: "2026-08-25",
         unread,
         savedAt: mockNow(),
@@ -260,7 +253,6 @@ export const mockApi: Api = {
       };
     }),
 
-  // в ?state=empty ближайших сроков нет, но следующий срок 25 августа остаётся — как в S2 и S6
   calendar: (from, to) =>
     delay(() =>
       tasks
@@ -271,7 +263,6 @@ export const mockApi: Api = {
 
   company: () => delay(() => load<Company>(SESSION_KEY) ?? company),
 
-  // как на сервере: реестры ФНС отвечают несколько секунд — радар успевает покрутиться
   refreshCompany: () =>
     new Promise((resolve) =>
       setTimeout(() => {
@@ -334,7 +325,6 @@ export const mockApi: Api = {
   },
 };
 
-/** Для S3: если в mock-режиме форсирована ошибка, а сохранённой версии нет — подкладываем её. */
 export function seedMockCache(): DashboardData {
   return {
     counters: { overdue: 1, soon: 2, done: 12 },

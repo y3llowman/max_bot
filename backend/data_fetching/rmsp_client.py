@@ -1,24 +1,3 @@
-"""Client for the Unified SME Registry (rmsp.nalog.ru), lookup by INN.
-
-rmsp.nalog.ru has no documented public API (the /developers.html page only
-lists SMEV 3.X access for accredited government systems and bulk open-data
-dumps). The site's own search page posts to an internal endpoint instead;
-this replicates that request, reverse-engineered from search.js /
-search-inn-list.js and confirmed against the live endpoint:
-
-    POST https://rmsp.nalog.ru/search-proc.json
-    Content-Type: application/x-www-form-urlencoded; charset=UTF-8
-    body: mode=inn-list&page=1&pageSize=<n>&sortField=&innList=<comma-separated INNs>
-
-No cookies, session, CSRF token, or captcha are required. Being undocumented,
-it can change or start requiring a captcha at any time without notice.
-
-Field mapping below is based on live response samples, not documentation.
-Average headcount ("Среднесписочная численность работников", od2_sschr) is
-only present for companies that reported it to ФНС: the key is missing both
-for zero and for "no data", so a missing key means "unknown".
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -45,25 +24,25 @@ HEADERS = {
 
 @dataclass
 class RmspRecord:
-    name: str  # "Наименование / ФИО"
-    subject_type: str  # "Тип субъекта": raw API code, "UL" or "IP"
-    category: int  # "Категория": 1/2/3 = микро/малое/среднее, 0 = нет данных (обычно исключен из реестра)
+    name: str
+    subject_type: str
+    category: int
     ogrn: str
     inn: str
-    main_activity_code: str  # "Основной вид деятельности" (ОКВЭД, код)
-    main_activity_name: str  # "Основной вид деятельности" (ОКВЭД, наименование)
-    region_code: str  # "Регион": числовой код региона, не название
-    is_new: bool  # "Вновь созданный"
-    date_registered: str  # "Дата включения в реестр"
-    date_excluded: str | None  # "Дата исключения из реестра"
+    main_activity_code: str
+    main_activity_name: str
+    region_code: str
+    is_new: bool
+    date_registered: str
+    date_excluded: str | None
     phone: str | None
     email: str | None
-    website: str | None  # "WWW"
-    employees_num: int | None  # "Среднесписочная численность работников" за прошлый год; None — нет данных
-    has_licenses: bool  # "Наличие лицензий"
-    is_hitech: bool  # "Производство инновационной, высокотехнологичной продукции"
-    is_partnership: bool  # "Участие в программах партнерства"
-    is_social: bool  # "Является социальным предприятием"
+    website: str | None
+    employees_num: int | None
+    has_licenses: bool
+    is_hitech: bool
+    is_partnership: bool
+    is_social: bool
 
     @classmethod
     def from_api(cls, row: dict) -> "RmspRecord":
@@ -91,11 +70,6 @@ class RmspRecord:
 
 
 def fetch_by_inn(inn: str) -> RmspRecord | None:
-    """Look up a single organization/IE in the SME registry by INN.
-
-    Returns None if the INN is not in the registry (not an SME, or the INN
-    doesn't exist).
-    """
     resp = requests.post(
         SEARCH_URL,
         headers=HEADERS,
@@ -110,7 +84,6 @@ def fetch_by_inn(inn: str) -> RmspRecord | None:
     )
     resp.raise_for_status()
     rows = resp.json()["data"]
-    # logger.info(f'Ответ rmsp.nalog.ru для ИНН {inn}: {rows}')
     return RmspRecord.from_api(rows[0]) if rows else None
 
 if __name__ == "__main__":

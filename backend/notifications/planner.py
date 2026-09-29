@@ -1,9 +1,3 @@
-"""Когда напоминать: настройки пользователя (экран «Уведомления»), метка напоминания и тихие часы.
-
-Расписание не хранится заранее: раз в день worker.queue_reminders() смотрит, сколько дней осталось
-до каждого открытого срока, и сверяет это с настройкой remind. После срока напоминает каждый день,
-пока задачу не закроют кнопкой «Сделано» или «Не актуально».
-"""
 from __future__ import annotations
 
 from datetime import date, datetime, time
@@ -14,11 +8,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 MSK = ZoneInfo("Europe/Moscow")
-REMIND_HOUR = 9  # напоминания уходят в 09:00 по Москве
+REMIND_HOUR = 9
 
 
 def today_msk() -> date:
-    """«Сегодня» по Москве: контейнер живёт в UTC, и с 00:00 до 03:00 МСК date.today() отставал бы на день."""
     return datetime.now(MSK).date()
 
 REMIND_OFFSETS: dict[str, tuple[int, ...]] = {
@@ -30,8 +23,6 @@ REMIND_OFFSETS: dict[str, tuple[int, ...]] = {
 
 
 class NotificationSettings(BaseModel):
-    """users.notification_settings; наружу — в camelCase, как NotificationSettings в types.ts.
-    push и email только хранятся: каналов, кроме чата MAX, пока нет."""
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
     chat: bool = True
@@ -55,7 +46,6 @@ class NotificationSettings(BaseModel):
 
 
 def reminder_label(due: date, today: date, settings: NotificationSettings) -> str | None:
-    """Метка напоминания на сегодня или None. Метка входит в dedup_key: одно напоминание на метку."""
     days_left = (due - today).days
     if days_left < 0:
         return f"overdue:{today:%y%m%d}"

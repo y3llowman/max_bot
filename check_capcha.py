@@ -34,26 +34,23 @@ SUSPICIOUS_STATUSES = {403, 429, 503}
 
 
 def analyze_response(resp: requests.Response) -> dict[str, Any]:
-    """Анализирует ответ и возвращает признаки капчи."""
     result = {
         "status_code": resp.status_code,
         "url": resp.url,
         "content_type": resp.headers.get("Content-Type", ""),
         "signals": [],
         "is_captcha": False,
-        "confidence": 0,  # 0..100
+        "confidence": 0,
     }
 
     text = resp.text or ""
     text_lower = text.lower()
     headers_lower = {k.lower(): v.lower() for k, v in resp.headers.items()}
 
-    # 1. HTTP-статус
     if resp.status_code in SUSPICIOUS_STATUSES:
         result["signals"].append(f"Подозрительный HTTP-статус: {resp.status_code}")
         result["confidence"] += 20
 
-    # 2. Заголовки
     if "cf-mitigated" in headers_lower and "challenge" in headers_lower["cf-mitigated"]:
         result["signals"].append("Cloudflare challenge (cf-mitigated)")
         result["confidence"] += 60
@@ -67,13 +64,11 @@ def analyze_response(resp: requests.Response) -> dict[str, Any]:
             result["signals"].append("Cloudflare + подозрительный статус")
             result["confidence"] += 15
 
-    # 3. Ключевые слова в теле
     found_keywords = sorted({kw for kw in CAPTCHA_KEYWORDS if kw in text_lower})
     if found_keywords:
         result["signals"].append(f"Ключевые слова: {found_keywords}")
         result["confidence"] += 15 * len(found_keywords)
 
-    # 4. HTML-паттерны
     found_html = []
     for pat in CAPTCHA_HTML_PATTERNS:
         if re.search(pat, text, re.IGNORECASE):
@@ -82,7 +77,6 @@ def analyze_response(resp: requests.Response) -> dict[str, Any]:
         result["signals"].append(f"HTML-паттерны капчи: {found_html}")
         result["confidence"] += 25 * len(found_html)
 
-    # 5. JSON-ключи
     if "application/json" in result["content_type"]:
         try:
             data = resp.json()
@@ -99,7 +93,6 @@ def analyze_response(resp: requests.Response) -> dict[str, Any]:
 
 
 def _find_json_keys(obj: Any, keys: list[str], prefix: str = "") -> list[str]:
-    """Рекурсивно ищет ключи в JSON."""
     found = []
     if isinstance(obj, dict):
         for k, v in obj.items():
@@ -115,7 +108,6 @@ def _find_json_keys(obj: Any, keys: list[str], prefix: str = "") -> list[str]:
 
 def check_url(method: str, url: str, headers: dict, data: str | None,
               timeout: float, allow_redirects: bool) -> dict[str, Any]:
-    """Делает запрос и анализирует результат."""
     kwargs = {
         "headers": headers,
         "timeout": timeout,
@@ -169,13 +161,6 @@ def main():
 
     args = parser.parse_args()
 
-    # headers = {}
-    # for h in args.header:
-    #     if ":" not in h:
-    #         print(f"Пропущен некорректный заголовок: {h}", file=sys.stderr)
-    #         continue
-    #     k, v = h.split(":", 1)
-    #     headers[k.strip()] = v.strip()
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
@@ -197,7 +182,6 @@ def main():
     else:
         print_report(result)
 
-    # exit code: 1 если капча найдена
     sys.exit(1 if result["is_captcha"] else 0)
 
 

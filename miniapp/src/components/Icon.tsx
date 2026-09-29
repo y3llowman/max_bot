@@ -4,10 +4,8 @@ export type { IconName };
 
 interface Props {
   name: IconName;
-  /** Размеры из макетов: 18, 20, 22, 24 — обводка масштабируется вместе с иконкой, как в Фигме. */
   size?: number;
   className?: string;
-  /** Подпись для скринридера; без неё иконка декоративная. */
   label?: string;
 }
 

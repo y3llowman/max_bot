@@ -1,5 +1,3 @@
-/* Company Card 353×271: аватар 52, разделитель, три строки реквизитов через 12, блок источника 64. */
-
 .card {
   display: flex;
   flex-direction: column;

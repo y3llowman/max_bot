@@ -1,15 +1,3 @@
-"""«Подготовить документ»: черновики .docx с реквизитами из реестра МСП и выписки ЕГРЮЛ.
-
-Суммы бот не знает, поэтому оставляет их пустыми полями. Код документа — Obligation.document:
-  notice        — уведомление об исчисленных суммах (КНД 1110355);
-  quota_order   — приказ о квотируемых рабочих местах;
-  enp_payment   — реквизиты платёжки на единый налоговый платёж (уплата ЕНП, УСН, взносы ИП);
-  report_brief  — памятка к отчёту: коды для титульного листа и что подготовить.
-
-Для отчётов бланк не рисуем намеренно: декларации и расчёты сдают в машиночитаемом формате
-через ЭДО или личный кабинет, а .docx «под бланк» сдать нельзя. Памятка экономит время на
-титульном листе и сборе данных, а сам отчёт формирует программа.
-"""
 from __future__ import annotations
 
 import io
@@ -45,7 +33,6 @@ KBK = {
     "insurance": ("Страховые взносы", "18210201000011000160"),
     "usn_income": ("Аванс по УСН «доходы»", "18210501011011000110"),
     "usn_ie": ("Аванс по УСН «доходы минус расходы»", "18210501021011000110"),
-    # у НДФЛ ИП КБК зависит от суммы дохода (прогрессивная шкала, приказ Минфина № 70н) — не угадываем
     "ndfl_ip": ("Аванс по НДФЛ ИП — КБК зависит от суммы дохода, сверьте в личном кабинете ИП", None),
 }
 
@@ -125,10 +112,6 @@ def _quota_order(doc: Document, payload: dict, due: date, req: dict) -> None:
     doc.add_paragraph(f"{req['director_position']} ____________ {req['director_name'] or BLANK}")
 
 
-# ---------------------------------------------------------------- платёжка на ЕНП
-# Реквизиты одинаковы для всех регионов. Сверены 28.09.2026 (памятка ФНС о реквизитах платёжных
-# документов, klerk.ru 20.05.2026): с 01.04.2026 КПП получателя — 770701001, КПП плательщика — «0».
-# Если ФНС поменяет реквизиты, править только здесь.
 ENP_CHECKED = date(2026, 9, 28)
 ENP_RECIPIENT = (
     ("13", "Банк получателя", "ОКЦ № 7 ГУ Банка России по ЦФО//УФК по Тульской области, г Тула"),
@@ -178,8 +161,7 @@ def _enp_payment(doc: Document, payload: dict, due: date, req: dict) -> None:
                       "сайтом ФНС: при смене реквизитов платёж может попасть в невыясненные.")
 
 
-# ---------------------------------------------------------------- памятки к отчётам
-PeriodFn = Callable[[date], tuple[str | None, int]]   # номинальный срок → (код периода, отчётный год)
+PeriodFn = Callable[[date], tuple[str | None, int]]
 
 
 def _annual(n: date) -> tuple[str | None, int]:
@@ -187,7 +169,6 @@ def _annual(n: date) -> tuple[str | None, int]:
 
 
 def _cumulative(annual_month: int) -> PeriodFn:
-    """21 / 31 / 33 — первый квартал, полугодие, 9 месяцев; 34 — год (срок в annual_month)."""
     def period(n: date) -> tuple[str | None, int]:
         if n.month == annual_month:
             return "34", n.year - 1
@@ -196,7 +177,6 @@ def _cumulative(annual_month: int) -> PeriodFn:
 
 
 def _vat(n: date) -> tuple[str | None, int]:
-    """НДС: 21–24 — I–IV квартал; срок в январе — за IV квартал прошлого года."""
     if n.month == 1:
         return "24", n.year - 1
     return {4: "21", 7: "22", 10: "23"}.get(n.month), n.year
@@ -209,9 +189,9 @@ def _year_only(n: date) -> tuple[str | None, int]:
 @dataclass(frozen=True)
 class Report:
     form: str
-    knd: str | None                     # код формы по КНД (для форм СФР — нет)
-    period: PeriodFn | None             # None — период берём из подписи задачи
-    needs: tuple[str, ...]              # что подготовить до отчёта
+    knd: str | None
+    period: PeriodFn | None
+    needs: tuple[str, ...]
 
 
 FNS_TOOL_LE = ("бухгалтерская программа, личный кабинет налогоплательщика или бесплатная "
@@ -219,7 +199,6 @@ FNS_TOOL_LE = ("бухгалтерская программа, личный ка
 FNS_TOOL_IP = "личный кабинет ИП на сайте ФНС или бухгалтерская программа"
 SFR_TOOL = "кабинет страхователя на сайте Социального фонда или бухгалтерская программа"
 
-# Коды форм и периодов сверены 28.09.2026 по порядкам заполнения ФНС.
 REPORTS: dict[str, Report] = {
     "usn_decl": Report(
         "Декларация по УСН", "1152017", _annual,
@@ -272,7 +251,6 @@ REPORTS: dict[str, Report] = {
 
 
 def report_period(code: str, payload: dict, due: date) -> tuple[str | None, int | None]:
-    """Код периода и отчётный год по номинальному (до переноса с выходных) сроку задачи."""
     report = REPORTS[code]
     if report.period is None:
         return None, None
@@ -337,14 +315,12 @@ CAPTIONS = {
 
 
 def caption(payload: dict) -> str:
-    """Подпись к файлу в чате."""
     code = payload["document"]
     head = CAPTIONS[code].format(doc=TITLES[code], title=payload["title"], period=payload["period"])
     return head + HINTS[code]
 
 
 def build(payload: dict, due: date, req: dict) -> tuple[str, bytes]:
-    """Документ payload["document"] к сроку due: (имя файла, содержимое .docx)."""
     code = payload["document"]
     doc = Document()
     BUILDERS[code](doc, payload, due, req)

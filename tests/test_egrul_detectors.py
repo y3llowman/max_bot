@@ -1,7 +1,3 @@
-"""Детекторы ЕГРЮЛ и разбор выписки — без БД и сети.
-
-Запуск из корня репозитория: python -m unittest discover -s tests
-"""
 import sys
 import unittest
 from datetime import date
@@ -11,9 +7,9 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from data_fetching import egrul_client  # noqa: E402
-from radar import detectors as det  # noqa: E402
-from radar.render import build_context, company_ctx, render  # noqa: E402
+from data_fetching import egrul_client
+from radar import detectors as det
+from radar.render import build_context, company_ctx, render
 
 TODAY = date(2026, 9, 27)
 INN = "7701234567"
@@ -31,7 +27,6 @@ def extract(**fields) -> dict:
 
 
 def text_of(draft: det.Draft) -> str:
-    """Сообщение, как его отправит worker._send: шаблоны со StrictUndefined падают на недостающих полях."""
     ctx = build_context(draft.type, draft.payload, company_ctx(None, {"name": 'ООО "МОСТАР"'}, INN), TODAY, src="egrul")
     return render(draft.type, ctx)
 
@@ -117,7 +112,7 @@ class ResolutionsTest(unittest.TestCase):
                    "court_date": None}
         [draft] = det.resolutions([self.event("egrul.director_disqualified", payload)], TODAY)
         self.assertIn("закончилась 7 дней назад", text_of(draft))
-        early = payload | {"end": "01.03.2027"}  # руководителя сменили раньше срока
+        early = payload | {"end": "01.03.2027"}
         self.assertEqual(det.resolutions([self.event("egrul.director_disqualified", early)], TODAY), [])
 
     def test_msp_conditions_have_no_resolution_message(self):
@@ -125,8 +120,6 @@ class ResolutionsTest(unittest.TestCase):
 
 
 class ParseExtractTest(unittest.TestCase):
-    """Строки таблицы — как их отдаёт PyMuPDF для настоящих выписок: с отметками о недостоверности
-    и компании в стадии ликвидации."""
     ROWS = [
         ["Место нахождения и адрес юридического лица", None, None],
         ["5", "Адрес юридического лица", "632450,\nНОВОСИБИРСКАЯ ОБЛАСТЬ,\nС. ДОВОЛЬНОЕ"],

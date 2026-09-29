@@ -36,7 +36,6 @@ class OrderState(StatesGroup):
 
 
 def is_valid_inn(inn: str) -> bool:
-    """Проверяет формат и контрольные суммы ИНН (10 цифр — юрлицо, 12 — физлицо/ИП)."""
     if not re.fullmatch(r"\d{10}|\d{12}", inn):
         return False
 
@@ -56,7 +55,6 @@ def is_valid_inn(inn: str) -> bool:
 
 ASK_INN = "Пришлите ИНН компании или ИП — 10 или 12 цифр. Профиль соберём сами из реестров ФНС."
 
-# Режима нет в открытых реестрах, численность есть не у всех — спрашиваем одним тапом
 QUESTIONS = {
     "regime": ("Какой у вас режим налогообложения? От него зависят декларации и сроки уплаты.", REGIME_RU),
     "staff": ("Сколько у вас сотрудников? От этого зависят отчёты за работников и квота для инвалидов.",
@@ -69,8 +67,6 @@ MSP_SIGNS = {"is_social": "социальное предприятие", "is_hit
 
 
 def company_card(business: Business, profile: Profile) -> str:
-    """Всё, что нашли о компании: реестр МСП и поправки пользователя. Выписка ЕГРЮЛ (адрес, КПП,
-    руководитель) догружается в фоне и видна в профиле мини-приложения."""
     okved = (f"{business.main_activity_code} — {html.escape(business.main_activity_name)}"
              if profile.okved_main == business.main_activity_code else f"{profile.okved_main} (указан вами)")
     contacts = " · ".join(html.escape(c) for c in (business.phone, business.email, business.website) if c)
@@ -96,7 +92,6 @@ def app_keyboard(app: dict):
 
 
 def edit_button(app: dict) -> OpenAppButton:
-    """Экран «Данные компании» в мини-приложении (диплинк profile_edit)."""
     return OpenAppButton(text="✏️ Исправить в приложении", **app, payload="profile_edit")
 
 
@@ -105,24 +100,21 @@ def question_keyboard(question: str, legal_entity: bool):
     return ButtonsPayload(buttons=[
         [CallbackButton(text=label[:1].upper() + label[1:], payload=f"q:{question}:{value}")]
         for value, label in options.items()
-        if not (legal_entity and value == "psn")  # патент — только для ИП (ст. 346.43 НК РФ)
+        if not (legal_entity and value == "psn")
     ]).pack()
 
 
 async def say(max_user_id: int, text: str, *attachments) -> str | None:
-    """Сообщение в чат; возвращает его id (для вопроса — чтобы удалить после ответа)."""
     sent = await bot.send_message(user_id=max_user_id, text=text, format=ParseMode.HTML,
                                   attachments=list(attachments) or None)
     return sent.message.body.mid if sent else None
 
 
 async def ask(max_user_id: int, question: str, legal_entity: bool) -> None:
-    """Вопрос профиля кнопками. Пока на него не ответили, очередь радара молчит (worker.hold)."""
     await worker.hold(max_user_id, await say(max_user_id, QUESTIONS[question][0], question_keyboard(question, legal_entity)))
 
 
 def message_id(event: MessageCallback) -> str | None:
-    """Сообщение, под которым нажали кнопку."""
     return event.message.body.mid if event.message else None
 
 
@@ -131,8 +123,6 @@ async def find_user(db, max_user_id: int) -> User | None:
 
 
 async def obligations_summary(inn: str) -> str:
-    """Итог онбординга — коротко: сколько обязанностей и ближайший срок. Список, календарь, документы
-    и льготы — в мини-приложении."""
     today = today_msk()
     async with SessionLocal() as db:
         profile = await worker.load_profile(db, inn)
@@ -155,8 +145,6 @@ async def obligations_summary(inn: str) -> str:
 
 
 async def next_step(max_user_id: int) -> bool:
-    """После ИНН и после каждого ответа: следующий вопрос профиля или итог — список обязанностей.
-    True — задан вопрос (очередь радара ждёт ответа на него)."""
     async with SessionLocal() as db:
         user = await find_user(db, max_user_id)
         business = await current_business(db, user.id) if user else None
@@ -185,27 +173,24 @@ async def _save_business(max_user_id: int, sender, record: rmsp_client.RmspRecor
         user.first_name = sender.first_name
         user.last_name = sender.last_name
 
-        # user_businesses ссылается на users.id — пользователь должен попасть в БД раньше связи
         await db.flush()
         return await save_business(db, user.id, record)
 
 
-_background: set[asyncio.Task] = set()  # ссылки на фоновые задачи: без них задачу может собрать сборщик мусора
+_background: set[asyncio.Task] = set()
 
 
 def _start_radar(inn: str) -> None:
-    """Медленные источники — в фоне: выписка ЕГРЮЛ и выгрузки ЕРКНМ (ошибки логирует сам scan_in_background)."""
     task = asyncio.create_task(worker.scan_in_background(inn))
     _background.add(task)
     task.add_done_callback(_background.discard)
 
 
 async def start(max_user_id: int, context: BaseContext) -> None:
-    """Нет компании — ждём ИНН; есть — продолжаем с того места, где остановились."""
     async with SessionLocal() as db:
         user = await find_user(db, max_user_id)
         connected = user is not None and await current_business(db, user.id) is not None
-        if user is not None and not user.is_active:  # снова запустил бота после блокировки — пишем снова
+        if user is not None and not user.is_active:
             user.is_active = True
             await db.commit()
     if not connected:
@@ -213,13 +198,11 @@ async def start(max_user_id: int, context: BaseContext) -> None:
     await next_step(max_user_id)
 
 
-# /start
 @dp.message_created(CommandStart())
 async def hello(event: MessageCreated, context: BaseContext):
     await start(event.message.sender.user_id, context)
 
 
-# первый запуск бота 
 @dp.bot_started()
 async def on_bot_started(event: BotStarted, context: BaseContext):
     await start(event.user.user_id, context)
@@ -241,31 +224,36 @@ async def on_profile(event: MessageCreated):
         [OpenAppButton(text="Открыть приложение", **app)],
     ]).pack())
 
-# @dp.message_created(Command("demo_mode"))
-#     async def on_demo_remind(event: MessageCreated):
-#         sent = await worker.demo_remind(event.message.sender.user_id)
-#         if not sent:
-#             await event.message.answer("Открытых сроков нет — сначала подключите компанию: пришлите ИНН.")
+
+TOUR_RUNNING = ("Идёт демо-тур /demo — одновременно работает только одно демо. Пройдите его до конца или "
+                "нажмите «⏹ Стоп» под карточкой шага, потом повторите команду.")
 
 if DEBUG:
-    # триггеры для демо
     @dp.message_created(Command("demo_remind"))
     async def on_demo_remind(event: MessageCreated):
+        if demo_tour.running(event.message.sender.user_id):
+            await event.message.answer(TOUR_RUNNING)
+            return
         sent = await worker.demo_remind(event.message.sender.user_id)
         if not sent:
             await event.message.answer("Открытых сроков нет — сначала подключите компанию: пришлите ИНН.")
 
     @dp.message_created(Command("demo_event"))
     async def on_demo_event(event: MessageCreated):
+        if demo_tour.running(event.message.sender.user_id):
+            await event.message.answer(TOUR_RUNNING)
+            return
         args = event.message.body.text.split()[1:]
         await event.message.answer(await worker.demo_event(event.message.sender.user_id, args[0] if args else ""))
 
     @dp.message_created(Command("demo_law"))
     async def on_demo_law(event: MessageCreated):
+        if demo_tour.running(event.message.sender.user_id):
+            await event.message.answer(TOUR_RUNNING)
+            return
         await event.message.answer(await worker.demo_law(event.message.sender.user_id))
 
     async def show_profile(max_user_id: int) -> None:
-        """Шаг тура «Регистрация»: та же карточка «Всё верно?», что после ИНН."""
         async with SessionLocal() as db:
             user = await find_user(db, max_user_id)
             business = await current_business(db, user.id)
@@ -273,10 +261,8 @@ if DEBUG:
 
     @dp.message_created(Command("laws"))
     async def on_laws(event: MessageCreated):
-        """Проверка ленты законов: что бот отобрал за неделю и почему."""
         await say(event.message.sender.user_id, await worker.laws_report())
 
-    # полный демо-сценарий по шагам (notifications/demo.py)
     @dp.message_created(Command("demo"))
     async def on_demo(event: MessageCreated):
         max_user_id = event.message.sender.user_id
@@ -286,16 +272,15 @@ if DEBUG:
     async def on_demo_step(event: MessageCallback):
         await event.answer()
         max_user_id = event.callback.user.user_id
-        await worker.answered(max_user_id, message_id(event), release=False)  # карточка шага отработала
+        await worker.answered(max_user_id, message_id(event), release=False)
         await demo_tour.run(max_user_id, event.callback.payload.removeprefix("demo:"), lambda: show_profile(max_user_id))
 
 @dp.message_created(states=OrderState.waiting_for_inn)
 async def on_inn(event: MessageCreated, context: BaseContext):
-    inn = (event.message.body.text or "").strip()  # фото и стикеры приходят без текста
+    inn = (event.message.body.text or "").strip()
     logger.info("Пользователь %s ввёл ИНН: %s", 'тип:' + str(type(inn)), 'ИНН:' + inn)
 
     if not is_valid_inn(inn):
-        # пришел некорректный ИНН
         await event.message.answer(
             "Некорректный ИНН. Введите 10 цифр (для организации) "
             "или 12 цифр (для ИП/физлица) без пробелов:"
@@ -318,7 +303,6 @@ async def on_inn(event: MessageCreated, context: BaseContext):
         )
         return
 
-    # пришел корректный ИНН
     max_user_id = event.message.sender.user_id
     try:
         business = await _save_business(max_user_id, event.message.sender, record)
@@ -336,8 +320,6 @@ async def on_inn(event: MessageCreated, context: BaseContext):
 
 
 async def show_found(max_user_id: int, business: Business) -> None:
-    """Всё, что нашли о компании, и «Всё верно?»: «Да» — вопросы профиля в чате, «Исправить» — экран
-    «Данные компании» в приложении (оттуда можно поправить и позже). Очередь ждёт ответа на карточку."""
     async with SessionLocal() as db:
         profile = await worker.load_profile(db, business.inn)
     app = await bot_app()
@@ -349,7 +331,6 @@ async def show_found(max_user_id: int, business: Business) -> None:
 
 @dp.message_callback(F.callback.payload == "reg:ok")
 async def on_registration_ok(event: MessageCallback):
-    """Данные верны: карточку убираем, дальше — вопросы профиля или итог."""
     await event.answer(notification="Отлично")
     max_user_id = event.callback.user.user_id
     await worker.answered(max_user_id, message_id(event), release=False)
@@ -357,7 +338,6 @@ async def on_registration_ok(event: MessageCallback):
         await worker.dispatch()
 
 
-# ИНН без /start: состояние бота живёт в памяти и сбрасывается при перезапуске
 @dp.message_created(F.message.body.text.regexp(r"^\s*(\d{10}|\d{12})\s*$"))
 async def on_inn_any_state(event: MessageCreated, context: BaseContext):
     await on_inn(event, context)
@@ -374,7 +354,6 @@ async def on_ask(event: MessageCallback):
 
 @dp.message_callback(F.callback.payload.startswith("q:"))
 async def on_answer(event: MessageCallback):
-    """Ответ на вопрос профиля: сохранить, пересчитать обязанности, задать следующий вопрос."""
     _, question, value = event.callback.payload.split(":")
     max_user_id = event.callback.user.user_id
     async with SessionLocal() as db:
@@ -399,13 +378,11 @@ async def on_answer(event: MessageCallback):
         inn = business.inn
     added, removed = await worker.materialize_for(inn)
     await event.answer(notification=f"Сохранили: {label}")
-    # вопрос отвечен — убираем его; очередь радара отпускаем, только если следующего вопроса нет
     await worker.answered(max_user_id, message_id(event), release=False)
     if not was_complete:
         if not await next_step(max_user_id):
             await worker.dispatch()
         return
-    # профиль уже был заполнен — сообщаем, как изменился список обязанностей
     lines = ["Профиль обновлён."]
     if added:
         lines += ["", "<b>Появились обязанности</b>", *[f"• {title}" for title in added]]
@@ -419,7 +396,6 @@ async def on_answer(event: MessageCallback):
 
 @dp.message_callback(F.callback.payload.startswith("flag:"))
 async def on_flag(event: MessageCallback):
-    """Вопрос о признаке компании перед рассылкой акта: flag:<признак>:yes|no (radar.render.flag_keyboard)."""
     _, flag, value = event.callback.payload.split(":")
     await event.answer(notification=await worker.answer_flag(event.callback.user.user_id, flag, value == "yes"))
     await worker.answered(event.callback.user.user_id, message_id(event))
@@ -427,16 +403,14 @@ async def on_flag(event: MessageCallback):
 
 @dp.message_callback(F.callback.payload.startswith("ev:"))
 async def on_event_action(event: MessageCallback):
-    """Кнопки под пушем: ev:<ids>:list|done|mute (radar.render.keyboard; snooze1d — у старых сообщений)."""
     _, ids, action = event.callback.payload.split(":")
     answer = await worker.apply_action(event.callback.user.user_id, [int(i) for i in ids.split(",")], action)
     await event.answer(notification=answer)
-    await worker.answered(event.callback.user.user_id, message_id(event))  # ответили — убрать и прислать следующее
+    await worker.answered(event.callback.user.user_id, message_id(event))
 
 
 @dp.message_callback(F.callback.payload.startswith("doc:"))
 async def on_document(event: MessageCallback):
-    """«Подготовить документ» под напоминанием: doc:<event_id>:<код документа>."""
     max_user_id = event.callback.user.user_id
     async with SessionLocal() as db:
         _, events = await worker.user_events(db, max_user_id, [int(event.callback.payload.split(":")[1])])
@@ -447,7 +421,6 @@ async def on_document(event: MessageCallback):
         await worker.send_document(db, events[0], max_user_id)
 
 
-# Последним: всё, что не ИНН, не команда и не кнопка. Без него бот молчал бы.
 @dp.message_created()
 async def on_other(event: MessageCreated):
     await event.message.answer(

@@ -1,30 +1,3 @@
-"""Client for the Unified State Register of Legal Entities (egrul.nalog.ru).
-
-egrul.nalog.ru has no free structured (JSON/XML) API for full company data.
-The only two free ways to get data out of it are:
-
-1. The search step of its own UI, reverse-engineered below (search() /
-   fetch_by_inn()). It already returns a decent chunk of structured JSON -
-   full/short name, address, OGRN(+date), INN, KPP, director post+name,
-   liquidation/invalidation dates - with no PDF involved at all. Good enough
-   for a quick "does this company exist / is it alive" check.
-2. The official "выписка" PDF (download_extract_pdf() / get_extract()),
-   which is the only free source for OKVED codes, founders/participants,
-   capital and a few other fields. It has to be parsed (parse_extract_pdf(),
-   using PyMuPDF's table extraction) since nalog.ru does not offer it as
-   structured data for free - a paid SMEV/API access exists (tens of
-   thousands of rubles/year) but isn't worth it for this project.
-
-The request flow below (POST / -> GET search-result/<token> -> GET
-vyp-request/<token> -> GET vyp-status/<token> -> GET vyp-download/<token>)
-is reverse-engineered from egrul.nalog.ru's own frontend JS, not documented
-anywhere. No cookies/session token/captcha are required for a single
-lookup done at a human pace, but the site starts requiring a captcha if
-requests come in too fast or in bulk (see CaptchaRequiredError) - there is
-no way around that short of solving the captcha, which is out of scope
-here.
-"""
-
 from __future__ import annotations
 
 import time
@@ -50,11 +23,10 @@ HEADERS = {
     "Referer": "https://egrul.nalog.ru/index.html",
 }
 
-# Pause between polling requests, and how long to keep polling before giving up.
 POLL_INTERVAL_SECONDS = 1.0
 POLL_TIMEOUT_SECONDS = 30.0
 
-STATE_SECTION = "Сведения о состоянии"  # prefix of "Сведения о состоянии юридического лица"
+STATE_SECTION = "Сведения о состоянии"
 DISQUALIFICATION_SECTION = (
     "Сведения о дисквалификации лица, имеющего право без доверенности "
     "действовать от имени юридического лица"
@@ -62,30 +34,25 @@ DISQUALIFICATION_SECTION = (
 
 
 class CaptchaRequiredError(RuntimeError):
-    """egrul.nalog.ru is asking for a captcha - back off and slow down."""
+    pass
 
 
 class EgrulTimeoutError(RuntimeError):
-    """Search or PDF generation didn't finish within POLL_TIMEOUT_SECONDS."""
-
-
-# --------------------------------------------------------------------------
-# Quick structured metadata - no PDF needed.
-# --------------------------------------------------------------------------
+    pass
 
 
 @dataclass
 class EgrulSearchRecord:
-    full_name: str  # "Полное наименование"
+    full_name: str
     short_name: str | None
     address: str | None
     ogrn: str | None
-    ogrn_date: str | None  # "Дата присвоения ОГРН"
+    ogrn_date: str | None
     inn: str
     kpp: str | None
     liquidation_date: str | None
-    invalidation_date: str | None  # дата признания регистрации недействительной
-    entity_type: str | None  # raw nalog.ru type code
+    invalidation_date: str | None
+    entity_type: str | None
     director_position: str | None
     director_name: str | None
 
@@ -150,13 +117,6 @@ def  _search_rows(session: requests.Session, token: str) -> list[dict]:
 
 
 def  search(query: str, region: str = "") -> list[EgrulSearchRecord]:
-    """Search egrul.nalog.ru by INN, OGRN or company name.
-
-    Returns lightweight metadata straight from the search JSON - no PDF is
-    downloaded. Use download_extract_pdf()/get_extract() for OKVED,
-    founders/participants, capital and other fields that only exist in the
-    full PDF извлечение.
-    """
     session = requests.Session()
     token = _search_token(session, query, region)
     rows = _search_rows(session, token)
@@ -164,14 +124,8 @@ def  search(query: str, region: str = "") -> list[EgrulSearchRecord]:
 
 
 def  fetch_by_inn(inn: str) -> EgrulSearchRecord | None:
-    """Look up a single organization by INN. Returns None if not found."""
     results = search(inn)
     return next((r for r in results if r.inn == inn), None)
-
-
-# --------------------------------------------------------------------------
-# Full "выписка" PDF: download + parse.
-# --------------------------------------------------------------------------
 
 
 @dataclass
@@ -179,14 +133,14 @@ class Person:
     surname: str | None = None
     name: str | None = None
     patronymic: str | None = None
-    full_name: str | None = None  # set instead of surname/name/patronymic for a legal-entity founder
+    full_name: str | None = None
     inn: str | None = None
-    ogrn: str | None = None  # legal-entity founders only
-    position: str | None = None  # director/head only
+    ogrn: str | None = None
+    position: str | None = None
     gender: str | None = None
     citizenship: str | None = None
-    share_value_rub: int | None = None  # founders only
-    share_percent: float | None = None  # founders only
+    share_value_rub: int | None = None
+    share_percent: float | None = None
 
 
 @dataclass
@@ -197,18 +151,17 @@ class OkvedCode:
 
 @dataclass
 class Note:
-    """A "Дополнительные сведения" row, e.g. "сведения недостоверны (...)"."""
-    section: str  # the section it belongs to: address, director, founders...
+    section: str
     text: str
-    date: str | None = None  # date of the ЕГРЮЛ entry (from the ГРН row right below)
+    date: str | None = None
 
 
 @dataclass
 class EgrulExtract:
     full_name: str | None = None
     short_name: str | None = None
-    location: str | None = None  # "Место нахождения" (city/region only)
-    address: str | None = None  # "Адрес юридического лица" (full postal address)
+    location: str | None = None
+    address: str | None = None
     email: str | None = None
     ogrn: str | None = None
     registration_date: str | None = None
@@ -230,9 +183,7 @@ class EgrulExtract:
     founders: list[Person] = field(default_factory=list)
     okved_main: OkvedCode | None = None
     okved_additional: list[OkvedCode] = field(default_factory=list)
-    notes: list[Note] = field(default_factory=list)  # any "Дополнительные сведения" rows, e.g. reliability flags
-    # "Сведения о состоянии юридического лица": only present when the company is being
-    # liquidated/reorganized or ФНС decided to strike it off, e.g. "Находится в стадии ликвидации"
+    notes: list[Note] = field(default_factory=list)
     status: str | None = None
     status_date: str | None = None
 
@@ -265,12 +216,6 @@ def  _download_pdf(session: requests.Session, token: str) -> bytes:
 
 
 def  download_extract_pdf(inn: str) -> bytes | None:
-    """Download the official ЕГРЮЛ extract PDF for a company by INN.
-
-    Returns None if the INN is not found. Reproduces the request flow the
-    egrul.nalog.ru search page itself makes to generate and download a
-    "выписка" (search -> vyp-request -> vyp-status -> vyp-download).
-    """
     session = requests.Session()
     token = _search_token(session, inn)
     rows = _search_rows(session, token)
@@ -312,14 +257,6 @@ def  _to_float(value: str | None) -> float | None:
 
 
 def  _table_rows(doc: pymupdf.Document):
-    """Yields [number, label, value] rows from every 3-column table in the PDF.
-
-    The two single-row "boxed digit" tables at the top of page 1 (ОГРН and
-    ИНН spelled one digit per cell) have a different column count and are
-    skipped - their values are picked up again, in normal form, from the
-    "Сведения о регистрации" / "Сведения об учете в налоговом органе"
-    sections further down.
-    """
     for page in doc:
         for table in page.find_tables().tables:
             if table.col_count == 3:
@@ -351,25 +288,6 @@ def  _fill_person(person: Person, label: str, raw_value: str | None) -> None:
 
 
 def  parse_extract_pdf(pdf_bytes: bytes) -> EgrulExtract:
-    """Parse a ЕГРЮЛ extract PDF (as returned by download_extract_pdf) into
-    structured data, using PyMuPDF's table extraction on the underlying
-    "№ п/п | Наименование показателя | Значение показателя" table.
-
-    Out of scope: the audit trail at the end of the document ("Сведения о
-    записях, внесенных в ЕГРЮЛ" - the numbered history of registry entries
-    and the documents submitted for each) is skipped entirely. It's an
-    event log, not an entity attribute, and only one sample PDF was
-    available to reverse-engineer this against, so its layout (variable
-    number of entries, nested "Сведения о документах" sub-rows) wasn't
-    worth guessing at. The company's current state (liquidation, upcoming
-    strike-off) is read from "Сведения о состоянии юридического лица"
-    instead (checked on a real extract of a company in liquidation; the
-    section may have no ГРН row, then status_date stays None).
-
-    Legal-entity founders (as opposed to individual people) are only
-    best-effort supported (full_name/ogrn/inn on Person) since no real
-    sample with one was available either.
-    """
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     extract = EgrulExtract()
     section = ""
@@ -378,14 +296,10 @@ def  parse_extract_pdf(pdf_bytes: bytes) -> EgrulExtract:
     for row in _table_rows(doc):
         num, label, value = row
         if label is None and value is None:
-            # merged section-header row (spans all 3 columns)
             if num:
                 section = _clean(num) or ""
             continue
         if not num and value in (None, "") and label:
-            # "Сведения о дисквалификации..." is the one section header
-            # that, unlike the others, lands in the label column instead
-            # of the merged column.
             header = _clean(label)
             if header == DISQUALIFICATION_SECTION:
                 section = header
@@ -401,7 +315,6 @@ def  parse_extract_pdf(pdf_bytes: bytes) -> EgrulExtract:
                 extract.notes.append(Note(section=section, text=value_c))
             continue
         if "ГРН и дата" in label_c:
-            # the entry date matters for a note or a status: deadlines are counted from it
             entry_date = (_lines(value) or [None])[-1]
             last_note = extract.notes[-1] if extract.notes else None
             if last_note and last_note.section == section and last_note.date is None:
@@ -491,10 +404,6 @@ def  parse_extract_pdf(pdf_bytes: bytes) -> EgrulExtract:
 
 
 def  get_extract(inn: str) -> EgrulExtract | None:
-    """Download and parse the full ЕГРЮЛ extract for a company by INN.
-
-    Returns None if the INN is not found.
-    """
     pdf_bytes = download_extract_pdf(inn)
     return parse_extract_pdf(pdf_bytes) if pdf_bytes is not None else None
 
