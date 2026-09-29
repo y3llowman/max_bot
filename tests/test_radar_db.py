@@ -457,6 +457,38 @@ class RadarDbTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.events(source="demo"), [])
         self.assertTrue(await self.events(type="deadline"), "настоящие сроки остались")
 
+    async def test_demo_step_explains_before_its_messages(self):
+        from notifications import demo as tour
+        await self.answer("usn_income", 40)
+        log = []
+
+        async def head(uid, text, kb=None):
+            log.append(("explanation", text))
+            return "mid-head"
+
+        async def queued(uid, text, kb=None):
+            log.append(("queue", text))
+            return "mid-1"
+
+        with patch.object(tour, "send_html", head), patch.object(worker, "send_html", queued),                 patch.object(tour, "bot_app", AsyncMock(return_value=BOT_APP)):
+            await tour.intro(MAX_USER)
+            log.clear()
+            arg = "0:2"
+            tour._tours[MAX_USER] = "0"
+            await tour.run(MAX_USER, arg, AsyncMock())
+            for _ in range(10):
+                if any("показано" in text for kind, text in log):
+                    break
+                await self.reply()
+        self.assertEqual(log[0][0], "explanation")
+        self.assertIn("Шаг 2 из", log[0][1])
+        self.assertIn("Что проверить", log[0][1])
+        self.assertIn("Напоминания о сроках", log[0][1])
+        pushes = [i for i, (kind, text) in enumerate(log) if kind == "queue" and "показано" not in text]
+        card = next(i for i, (kind, text) in enumerate(log) if "показано" in text)
+        self.assertTrue(pushes and max(pushes) < card, "карточка с кнопками — после всех сообщений шага")
+        self.assertGreater(min(pushes), 0, "сообщения шага идут после объяснения")
+
     async def test_only_one_demo_tour_at_a_time(self):
         from notifications import demo as tour
         await self.answer("usn_income", 40)

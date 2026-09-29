@@ -4,13 +4,13 @@
   justify-content: center;
   gap: 8px;
   border-radius: var(--radius-m);
-  white-space: nowrap;
+  text-align: center;
   transition: background-color 0.12s, box-shadow 0.12s, opacity 0.12s;
   user-select: none;
 }
 
-.l { height: 52px; padding: 0 20px; font-size: 16px; line-height: 20px; font-weight: 600; }
-.m { height: 48px; padding: 0 24px; min-width: 220px; font-size: 14px; line-height: 18px; font-weight: 600; }
+.l { min-height: 52px; padding: 8px 16px; font-size: 16px; line-height: 20px; font-weight: 600; }
+.m { min-height: 48px; padding: 8px 24px; min-width: 220px; font-size: 14px; line-height: 18px; font-weight: 600; }
 .block { width: 100%; }
 
 .primary { background: var(--primary-strong); color: var(--text-on-primary); }

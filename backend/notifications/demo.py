@@ -337,8 +337,12 @@ async def run(max_user_id: int, arg: str, show_profile: Callable[[], Awaitable[N
     else:
         _running.discard(max_user_id)
     step = STEPS[n - 1]
+    title = f"☝️ <b>Шаг {n} из {len(STEPS)} · {step.title}</b>"
+    explanation = f"{title}\n\n<b>Что проверить.</b> {step.check}"
+    if step.run:
+        await send_html(max_user_id, explanation + "\n\nСообщения этого шага — ниже 👇")
     note = await step.run(ctx) if step.run else None
-    text = f"☝️ <b>Шаг {n} из {len(STEPS)} · {step.title}</b>\n\n<b>Что проверить.</b> {step.check}"
+    text = f"{title} — показано." if step.run else explanation
     if note:
         text += f"\n\n⚠️ {note}"
     rows = []
