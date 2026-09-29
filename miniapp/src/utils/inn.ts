@@ -32,10 +32,3 @@ export function innError(check: InnCheck): string | null {
   }
   return "Похоже, в ИНН опечатка — проверьте цифры";
 }
-
-export function innFromQr(text: string): string | null {
-  const payee = /PayeeINN=(\d{10}|\d{12})(?!\d)/i.exec(text);
-  if (payee) return payee[1];
-  const loose = /(?<!\d)(\d{12}|\d{10})(?!\d)/.exec(text);
-  return loose ? loose[1] : null;
-}

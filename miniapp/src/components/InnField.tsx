@@ -1,5 +1,4 @@
 import { useId } from "react";
-import { IconButton } from "./Button";
 import { Icon } from "./Icon";
 import s from "./InnField.module.css";
 
@@ -8,12 +7,11 @@ interface Props {
   onChange: (value: string) => void;
   onBlur?: () => void;
   onSubmit?: () => void;
-  onScan?: () => void;
   error?: string | null;
   disabled?: boolean;
 }
 
-export function InnField({ value, onChange, onBlur, onSubmit, onScan, error, disabled }: Props) {
+export function InnField({ value, onChange, onBlur, onSubmit, error, disabled }: Props) {
   const id = useId();
   const hintId = `${id}-hint`;
 
@@ -44,7 +42,6 @@ export function InnField({ value, onChange, onBlur, onSubmit, onScan, error, dis
           />
           {error && <Icon name="alert-circle" size={20} className={s.errorIcon} />}
         </div>
-        {onScan && <IconButton icon="qr" label="Отсканировать QR-код" outlined onClick={onScan} disabled={disabled} />}
       </div>
       <p id={hintId} className={`t-note ${error ? s.hintError : s.hint}`} role={error ? "alert" : undefined}>
         {error ?? "10 цифр — организация, 12 — ИП"}

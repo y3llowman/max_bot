@@ -8,8 +8,8 @@ import { Icon, type IconName } from "../components/Icon";
 import { InnField } from "../components/InnField";
 import { APP_NAME, Screen } from "../components/Screen";
 import { useToast } from "../components/Toast";
-import { checkInn, innError, innFromQr } from "../utils/inn";
-import { canScanQr, haptic, scanQr } from "../max/bridge";
+import { checkInn, innError } from "../utils/inn";
+import { haptic } from "../max/bridge";
 import { useSession } from "../session";
 import { Splash } from "./Splash";
 import s from "./Connect.module.css";
@@ -47,7 +47,7 @@ export function Connect() {
       haptic.error();
       const code = e instanceof ApiError ? e.code : "server";
       if (code === "not_found") {
-        setServerError("Не нашли компанию с таким ИНН в реестре ФНС — проверьте цифры");
+        setServerError("Такого ИНН нет в реестре МСП (в демо-версии — в загруженном срезе). Проверьте цифры");
       } else if (code === "conflict") {
         setServerError("Эту компанию уже подключил другой пользователь MAX");
       } else {
@@ -56,23 +56,6 @@ export function Connect() {
           : "Не получилось подключить компанию: ошибка на нашей стороне, попробуйте позже";
         toast({ text, icon: "alert-circle" });
       }
-    }
-  };
-
-  const scan = async () => {
-    if (!canScanQr()) {
-      toast({ text: "Сканер QR работает в приложении MAX", icon: "info" });
-      return;
-    }
-    const text = await scanQr();
-    if (!text) return;
-    const found = innFromQr(text);
-    if (found) {
-      setInn(found);
-      setTouched(true);
-      setServerError(null);
-    } else {
-      toast({ text: "В этом QR-коде нет ИНН", icon: "alert-circle" });
     }
   };
 
@@ -103,13 +86,12 @@ export function Connect() {
         }}
         onBlur={() => inn && setTouched(true)}
         onSubmit={submit}
-        onScan={scan}
         error={error}
       />
       {error ? (
         <div className={s.alert}>
           <Alert tone="info" title="Где взять ИНН">
-            В выписке ЕГРЮЛ — или отсканируйте QR-код со счёта или письма из налоговой.
+            В свидетельстве о постановке на учёт, в выписке из ЕГРЮЛ или ЕГРИП, в письмах из налоговой.
           </Alert>
         </div>
       ) : (
